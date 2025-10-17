@@ -18,8 +18,8 @@ scipy==1.11.4
 pandas==2.0.3
 
 # Machine Learning
-torch==2.1.1
-torchvision==0.16.1
+torch==2.9.0
+torchvision==0.24.0
 
 # Astronomy
 astropy==6.0.0
