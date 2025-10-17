@@ -36,6 +36,3 @@ psutil==5.9.6
 # Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-
-# CORS
-python-cors==1.7.0
