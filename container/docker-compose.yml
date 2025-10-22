@@ -1,0 +1,53 @@
+name: astrodash-web
+
+services:
+    astrodash-web-backend:
+        image: ghcr.io/scimma/astrodash-web-backend
+        build:
+            context: ..
+            dockerfile: container/backend/Dockerfile
+            args:
+                PYTHON_VERSION: "${PYTHON_VERSION:-3.11}"
+                UID: "${UID:-1000}"
+                USERNAME: "${USERNAME:-dash}"
+                DASH_BASE_DIR: "${DASH_BASE_DIR:-/opt}"
+        deploy:
+            mode: replicated
+            replicas: 1
+        environment:
+            - DATA_DIR="${DATA_DIR:-/data}"
+            - SQLITE_DATABASE_PATH="${SQLITE_DATABASE_PATH:-/opt/test.db}"
+            - DATABASE_URL="${DATABASE_URL:-sqlite:/opt/test.db}"
+        command:
+            - "uvicorn"
+            - "app.main:app"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+        volumes:
+            - type: bind
+              source: ../data
+              target: "${DATA_DIR:-/data}"
+              read_only: false
+            - type: bind
+              source: ../prod_backend/test.db
+              target: "${SQLITE_DATABASE_PATH:-/opt/test.db}"
+              read_only: false
+        ports:
+            - "8000:8000"
+
+    astrodash-web-frontend:
+        image: ghcr.io/scimma/astrodash-web-frontend
+        build:
+            context: ..
+            dockerfile: container/frontend/Dockerfile
+        deploy:
+            mode: replicated
+            replicas: 1
+        command:
+            - "nginx"
+            - "-g"
+            - "daemon off;"
+        ports:
+            - "80:80"
