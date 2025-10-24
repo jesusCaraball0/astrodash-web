@@ -50,4 +50,4 @@ services:
             - "-g"
             - "daemon off;"
         ports:
-            - "80:80"
+            - "8888:80"

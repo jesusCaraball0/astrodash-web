@@ -27,7 +27,7 @@
    docker compose logs -f
    ```
 
-1. Browse to [http://localhost/](http://localhost)
+1. Browse to [http://localhost:8888/](http://localhost:8888/)
 
 1. Stop the services:
    ```
