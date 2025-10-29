@@ -35,7 +35,7 @@ services:
               target: "${SQLITE_DATABASE_PATH:-/opt/test.db}"
               read_only: false
         ports:
-            - "8000:8000"
+            - "127.0.0.1:8000:8000"
 
     astrodash-web-frontend:
         image: ghcr.io/scimma/astrodash-web-frontend
@@ -50,4 +50,4 @@ services:
             - "-g"
             - "daemon off;"
         ports:
-            - "8888:80"
+            - "127.0.0.1:8888:80"
