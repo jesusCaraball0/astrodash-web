@@ -1435,7 +1435,7 @@ const SupernovaClassifier: React.FC<SupernovaClassifierProps> = ({ toggleColorMo
           Docs
         </MuiLink>
         |
-        <MuiLink href="https://github.com/jesusCaraball0/astrodash-web" color="inherit" underline="hover" sx={{ mx: 1 }}>
+        <MuiLink href="https://github.com/scimma/astrodash-web" color="inherit" underline="hover" sx={{ mx: 1 }}>
           GitHub
         </MuiLink>
         |
