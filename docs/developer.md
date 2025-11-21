@@ -19,3 +19,15 @@ docker compose logs -f
 ```
 
 Open your browser to http://localhost:8888 to access the web app.
+
+## Build Frontend with Custom Backend API Base URL
+
+The default backend API base URL used by the frontend is
+http://localhost:8000.
+
+To build the static frontend with a custom backend API base URL:
+
+```bash
+export ASTRO_DASH_API_BASE_URL=https://api.dash.ncsa.illinois.edu
+docker compose up -d --build
+```

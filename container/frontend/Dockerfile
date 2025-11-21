@@ -12,7 +12,8 @@ COPY frontend/src /app/src
 COPY frontend/public /app/public
 COPY frontend/tsconfig.json /app/tsconfig.json
 
-RUN npm run build
+ARG ASTRO_DASH_API_BASE_URL=http://localhost:8000
+RUN REACT_APP_API_BASE_URL="${ASTRO_DASH_API_BASE_URL}" npm run build
 
 FROM nginx:trixie
 

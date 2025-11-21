@@ -42,6 +42,8 @@ services:
     build:
       context: ..
       dockerfile: container/frontend/Dockerfile
+      args:
+        ASTRO_DASH_API_BASE_URL: "${ASTRO_DASH_API_BASE_URL:-http://localhost:8000}"
     deploy:
       mode: replicated
       replicas: 1

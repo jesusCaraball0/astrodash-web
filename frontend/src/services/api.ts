@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Allow deployments to override the API host while keeping a sensible local default.
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 
 export interface SpectrumData {
   x: number[];
