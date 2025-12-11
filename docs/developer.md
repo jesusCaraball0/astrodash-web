@@ -25,8 +25,8 @@ js-blast
 
 # Enable bucket versioning
 #
-mc version enable js-blast/dash
-mc version info js-blast/dash
+mc version enable js-blast/astrodash
+mc version info js-blast/astrodash
 
 # Upload data files from local Git LFS clone
 #
@@ -48,7 +48,7 @@ $ python generate_manifest.py
 
 Creating a MinIO client...
 Listing objects in "s3://js2.jetstream-cloud.org:8001/dash/init_data/"...
-Writing manifest file "../dash-data.json"...
+Writing manifest file "../astrodash-data.json"...
 Manifest generation complete.
 ```
 
@@ -72,6 +72,6 @@ http://localhost:8000.
 To build the static frontend with a custom backend API base URL:
 
 ```bash
-export ASTRO_DASH_API_BASE_URL=https://api.dash.ncsa.illinois.edu
+export ASTRODASH_API_BASE_URL=https://api.dash.ncsa.illinois.edu
 docker compose up -d --build
 ```

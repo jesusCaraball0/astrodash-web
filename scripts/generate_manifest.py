@@ -10,7 +10,7 @@ Generate a JSON-formatted manifest of the latest versions of S3 objects.
 Set S3_ACCESS_KEY_ID_INIT and S3_SECRET_ACCESS_KEY_INIT in the env vars.
 '''
 endpoint = os.getenv("S3_ENDPOINT_URL_INIT", 'js2.jetstream-cloud.org:8001')
-bucket = os.getenv("S3_BUCKET_INIT", 'dash')
+bucket = os.getenv("S3_BUCKET_INIT", 'astrodash')
 base_path = os.getenv("S3_BASE_PATH_INIT", "init_data/")
 print('Creating a MinIO client...')
 client = Minio(
@@ -41,7 +41,7 @@ for obj in [obj for obj in objects]:
     if obj.is_latest.lower() == "true":
         file_info.append(info)
 
-manifest_filepath = os.path.join(Path(__file__).resolve().parent.parent, 'dash-data.json')
+manifest_filepath = os.path.join(Path(__file__).resolve().parent.parent, 'astrodash-data.json')
 print(f'Writing manifest file "{manifest_filepath}"...')
 with open(manifest_filepath, 'w') as fh:
     json.dump(file_info, fh, indent=2)
