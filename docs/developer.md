@@ -82,3 +82,18 @@ Alternatively, create a Docker Compose envrionment file at `/container/.env` wit
 ASTRODASH_API_BASE_URL=http://dev.dash.ncsa.illinois.edu
 # IMAGE_FRONTEND=hub.ncsa.illinois.edu/blast/astrodash-web-frontend:dev2
 ```
+
+## Deploying to production
+
+Deploying to production involves overriding some chart values like so:
+
+```bash
+$ helm upgrade --install --create-namespace --namespace astrodash astrodash . -f values.yaml -f values.prod.yaml 
+```
+
+This assumes that the `prod` image tag referenced by `values.prod.yaml` was built in `docker compose build` after setting in `.env` as shown below.
+
+```bash
+ASTRODASH_API_BASE_URL=https://dash.scimma.org
+IMAGE_FRONTEND=hub.ncsa.illinois.edu/blast/astrodash-web-frontend:prod
+```
