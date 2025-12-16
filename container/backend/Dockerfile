@@ -17,6 +17,13 @@ RUN mkdir -p ${DASH_BASE_DIR} && chown ${UID} -R ${DASH_BASE_DIR}
 COPY prod_backend/requirements/prod.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /tmp/requirements.txt
 
+# TODO: Move this to the top of the Dockerfile. It is only here
+#       because of the long build time while iterating on the code.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive && \
+    apt-get install -y \
+        git-lfs \
+    && rm -rf /var/lib/apt/lists/*
+
 USER ${USERNAME}
 
 # Copy the DASH application into place.

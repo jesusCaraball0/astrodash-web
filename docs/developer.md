@@ -75,3 +75,10 @@ To build the static frontend with a custom backend API base URL:
 export ASTRODASH_API_BASE_URL=https://api.dash.ncsa.illinois.edu
 docker compose up -d --build
 ```
+
+Alternatively, create a Docker Compose envrionment file at `/container/.env` with custom values; for example:
+
+```bash
+ASTRODASH_API_BASE_URL=http://dev.dash.ncsa.illinois.edu
+# IMAGE_FRONTEND=hub.ncsa.illinois.edu/blast/astrodash-web-frontend:dev2
+```

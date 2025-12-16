@@ -2,7 +2,7 @@ name: astrodash-web
 
 services:
   astrodash-web-backend:
-    image: ghcr.io/scimma/astrodash-web-backend
+    image: "${IMAGE_BACKEND:-hub.ncsa.illinois.edu/blast/astrodash-web-backend:dev}"
     build:
       context: ..
       dockerfile: container/backend/Dockerfile
@@ -38,7 +38,7 @@ services:
       - "127.0.0.1:8000:8000"
 
   astrodash-web-frontend:
-    image: ghcr.io/scimma/astrodash-web-frontend
+    image: "${IMAGE_FRONTEND:-hub.ncsa.illinois.edu/blast/astrodash-web-frontend:dev}"
     build:
       context: ..
       dockerfile: container/frontend/Dockerfile
