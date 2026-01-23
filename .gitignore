@@ -12,6 +12,8 @@ backend/astrodash_models/*
 backend/astrodash/*
 backend/dev_tests/astroset/training_set/*
 prod_backend/app/astrodash_models/*
+data/*
+prod_backend/test.db
 astrodash
 #Ignore testing files
 batch_upload.zip

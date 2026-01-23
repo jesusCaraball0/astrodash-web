@@ -125,7 +125,7 @@ async def process_spectrum(
     - File uploads (.dat, .lnw, .txt)
     - OSC references
     - User-uploaded models
-    - Dash and Transformer models
+    - DASH and Transformer models
     - Parameter customization (smoothing, redshift, etc.)
     """
     try:
@@ -212,9 +212,9 @@ async def estimate_redshift(
     redshift_service: RedshiftService = Depends(get_redshift_service),
 ):
     """
-    Estimate redshift from a spectrum using DASH (CNN) templates.
+    Estimate redshift from a spectrum using DASH templates.
 
-    IMPORTANT: This endpoint is only available for DASH (CNN) models as they are
+    IMPORTANT: This endpoint is only available for DASH models as they are
     the only models that have the required spectral templates for redshift estimation.
 
     Supports file upload method:
@@ -226,7 +226,7 @@ async def estimate_redshift(
         Dictionary with estimated redshift and error
     """
     try:
-        logger.info(f"Redshift estimation requested for {sn_type} {age_bin} (DASH only)")
+        logger.info(f"Redshift estimation requested for {sn_type} {age_bin}")
 
         # Handle file upload
         if file:

@@ -7,7 +7,7 @@ class ClassificationSchema(BaseModel):
     """
     id: Optional[str] = Field(None, description="Unique identifier for the classification result")
     spectrum_id: str = Field(..., description="ID of the classified spectrum")
-    model_type: str = Field(..., description="Type of model used for classification (e.g., 'dash', 'transformer')")
+    model_type: str = Field(..., description="Type of model used for classification (e.g., 'dash' for DASH, 'transformer' for Transformer)")
     user_model_id: Optional[str] = Field(None, description="User-uploaded model ID, if applicable")
     results: Dict[str, Any] = Field(..., description="Classification results (probabilities, best match, etc.)")
     meta: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional metadata")

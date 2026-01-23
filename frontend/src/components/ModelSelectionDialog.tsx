@@ -222,7 +222,7 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
 
       <DialogContent sx={{ pt: 2 }}>
         <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
-          {/* Transformer Model Card - RECOMMENDED */}
+          {/* DASH Model Card - RECOMMENDED */}
           <motion.div
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -232,10 +232,10 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
               sx={{
                 background: 'rgba(255, 255, 255, 0.1)',
                 backdropFilter: 'blur(10px)',
-                border: '2px solid rgba(255, 152, 0, 0.6)',
+                border: '2px solid rgba(76, 175, 80, 0.6)',
                 color: 'white',
                 height: '100%',
-                boxShadow: '0 0 20px rgba(255, 152, 0, 0.4), 0 0 40px rgba(255, 152, 0, 0.2)',
+                boxShadow: '0 0 20px rgba(76, 175, 80, 0.4), 0 0 40px rgba(76, 175, 80, 0.2)',
                 position: 'relative',
                 '&::before': {
                   content: '""',
@@ -244,7 +244,7 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
                   left: -2,
                   right: -2,
                   bottom: -2,
-                  background: 'linear-gradient(45deg, rgba(255, 152, 0, 0.3), rgba(255, 193, 7, 0.3))',
+                  background: 'linear-gradient(45deg, rgba(76, 175, 80, 0.3), rgba(129, 199, 132, 0.3))',
                   borderRadius: 'inherit',
                   zIndex: -1,
                   animation: 'pulse 2s infinite',
@@ -257,12 +257,12 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
               }}
             >
               <CardActionArea
-                onClick={() => handleModelSelect('transformer')}
+                onClick={() => handleModelSelect('dash')}
                 sx={{ height: '100%', p: 2 }}
               >
                 <CardContent sx={{ textAlign: 'center' }}>
                   <Box sx={{ position: 'relative' }}>
-                    <AutoAwesomeIcon sx={{ fontSize: 48, mb: 2, color: '#ff9800' }} />
+                    <ScienceIcon sx={{ fontSize: 48, mb: 2, color: '#4caf50' }} />
                     <Chip
                       label="RECOMMENDED"
                       size="small"
@@ -270,7 +270,7 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
                         position: 'absolute',
                         top: -10,
                         right: -10,
-                        backgroundColor: '#ff9800',
+                        backgroundColor: '#4caf50',
                         color: 'white',
                         fontWeight: 'bold',
                         fontSize: '0.7rem',
@@ -278,6 +278,55 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
                       }}
                     />
                   </Box>
+                  <Typography variant="h5" component="h3" sx={{ mb: 1, fontWeight: 600 }}>
+                    DASH Model
+                  </Typography>
+                  <Typography variant="body2" sx={{ mb: 2, opacity: 0.8 }}>
+                    CNN-based model with comprehensive template matching
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, justifyContent: 'center' }}>
+                    <Chip
+                      label="CNN"
+                      size="small"
+                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
+                    />
+                    <Chip
+                      label="Template Matching"
+                      size="small"
+                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
+                    />
+                    <Chip
+                      label="RLap Scores"
+                      size="small"
+                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
+                    />
+                  </Box>
+                </CardContent>
+              </CardActionArea>
+            </Card>
+          </motion.div>
+
+          {/* Transformer Model Card */}
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            style={{ flex: 1 }}
+          >
+            <Card
+              sx={{
+                background: 'rgba(255, 255, 255, 0.1)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                color: 'white',
+                height: '100%',
+              }}
+            >
+              <CardActionArea
+                onClick={() => handleModelSelect('transformer')}
+                sx={{ height: '100%', p: 2 }}
+              >
+                <CardContent sx={{ textAlign: 'center' }}>
+                  <AutoAwesomeIcon sx={{ fontSize: 48, mb: 2, color: '#ff9800' }} />
                   <Typography variant="h5" component="h3" sx={{ mb: 1, fontWeight: 600 }}>
                     Transformer Model
                   </Typography>
@@ -299,55 +348,6 @@ const ModelSelectionDialog: React.FC<ModelSelectionDialogProps> = ({
                       label="Fast Inference"
                       size="small"
                       sx={{ backgroundColor: 'rgba(255, 152, 0, 0.2)', color: '#ff9800' }}
-                    />
-                  </Box>
-                </CardContent>
-              </CardActionArea>
-            </Card>
-          </motion.div>
-
-          {/* Dash Model Card */}
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{ flex: 1 }}
-          >
-            <Card
-              sx={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                color: 'white',
-                height: '100%',
-              }}
-            >
-              <CardActionArea
-                onClick={() => handleModelSelect('dash')}
-                sx={{ height: '100%', p: 2 }}
-              >
-                <CardContent sx={{ textAlign: 'center' }}>
-                  <ScienceIcon sx={{ fontSize: 48, mb: 2, color: '#4caf50' }} />
-                  <Typography variant="h5" component="h3" sx={{ mb: 1, fontWeight: 600 }}>
-                    Dash Model
-                  </Typography>
-                  <Typography variant="body2" sx={{ mb: 2, opacity: 0.8 }}>
-                    Traditional CNN-based model with comprehensive template matching
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, justifyContent: 'center' }}>
-                    <Chip
-                      label="CNN"
-                      size="small"
-                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
-                    />
-                    <Chip
-                      label="Template Matching"
-                      size="small"
-                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
-                    />
-                    <Chip
-                      label="RLap Scores"
-                      size="small"
-                      sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
                     />
                   </Box>
                 </CardContent>

@@ -66,7 +66,7 @@ def get_sqlalchemy_spectrum_repository(db: Session = Depends(get_db)) -> SQLAlch
 # Service dependencies
 def get_template_analysis_service() -> TemplateAnalysisService:
     """Dependency to get template analysis service."""
-    # Create template handler for DASH model (which has templates)
+    # Create template handler for DASH (which has templates)
     template_handler = create_spectrum_template_handler('dash')
     return TemplateAnalysisService(template_handler)
 

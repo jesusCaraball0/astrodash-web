@@ -15,7 +15,7 @@ def create_spectrum_template_handler(model_type: str, template_path: Optional[st
     Factory function to create appropriate template handler.
 
     Args:
-        model_type: Type of model ('dash', 'transformer')
+        model_type: Type of model ('dash' for DASH, 'transformer' for Transformer)
         template_path: Path to template file (required for DASH)
 
     Returns:

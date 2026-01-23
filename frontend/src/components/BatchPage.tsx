@@ -260,7 +260,7 @@ const BatchPage: React.FC = () => {
             label={
               typeof selectedModel === 'object' && selectedModel.user
                 ? 'User Model'
-                : `${selectedModel === 'transformer' ? 'Transformer' : 'Dash'} Model`
+                : `${selectedModel === 'transformer' ? 'Transformer' : 'DASH'} Model`
             }
             onClick={() => setModelDialogOpen(true)}
             sx={{

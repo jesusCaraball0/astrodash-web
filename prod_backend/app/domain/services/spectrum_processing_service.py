@@ -205,7 +205,7 @@ class SpectrumProcessingService:
 
         Args:
             spectrum: Spectrum to prepare
-            model_type: Type of model ('dash', 'transformer', 'user_uploaded')
+            model_type: Type of model ('dash' for DASH, 'transformer' for Transformer, 'user_uploaded')
 
         Returns:
             Dictionary with prepared data
@@ -216,7 +216,7 @@ class SpectrumProcessingService:
             z = getattr(spectrum, 'redshift', 0.0) or 0.0
 
             if model_type == 'dash':
-                # Use Dash processor
+                # Use DASH processor
                 processed_y, min_idx, max_idx, processed_z = self.dash_processor.process(
                     wave=x,
                     flux=y,

@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field, AnyUrl, field_validator
 from typing import Optional, List, Dict
+from pathlib import Path
 import os
 
 class Settings(BaseSettings):
@@ -41,18 +42,19 @@ class Settings(BaseSettings):
     db_echo: bool = Field(False, env="DB_ECHO")
 
     # Data Storage (External to application code)
-    data_dir: str = Field("/data", env="DATA_DIR")
-    storage_dir: str = Field("/data", env="STORAGE_DIR")
+    # Note: Paths are relative to prod_backend/ where uvicorn runs
+    data_dir: str = Field("../data", env="DATA_DIR")
+    storage_dir: str = Field("../data", env="STORAGE_DIR")
 
     # ML Model Paths (External data directory)
-    user_model_dir: str = Field("/data/user_models", env="USER_MODEL_DIR")
-    dash_model_path: str = Field("/data/pre_trained_models/dash/pytorch_model.pth", env="DASH_MODEL_PATH")
-    dash_training_params_path: str = Field("/data/pre_trained_models/dash/training_params.pickle", env="DASH_TRAINING_PARAMS_PATH")
-    transformer_model_path: str = Field("/data/pre_trained_models/transformer/TF_wiserep_v6.pt", env="TRANSFORMER_MODEL_PATH")
+    user_model_dir: str = Field("../data/user_models", env="USER_MODEL_DIR")
+    dash_model_path: str = Field("../data/pre_trained_models/dash/pytorch_model.pth", env="DASH_MODEL_PATH")  # DASH model
+    dash_training_params_path: str = Field("../data/pre_trained_models/dash/training_params.pickle", env="DASH_TRAINING_PARAMS_PATH")  # DASH params
+    transformer_model_path: str = Field("../data/pre_trained_models/transformer/TF_wiserep_v6.pt", env="TRANSFORMER_MODEL_PATH")
 
     # Template and Line List Paths (External data directory)
-    template_path: str = Field("/data/pre_trained_models/templates/sn_and_host_templates.npz", env="TEMPLATE_PATH")
-    line_list_path: str = Field("/data/pre_trained_models/templates/sneLineList.txt", env="LINE_LIST_PATH")
+    template_path: str = Field("../data/pre_trained_models/templates/sn_and_host_templates.npz", env="TEMPLATE_PATH")
+    line_list_path: str = Field("../data/pre_trained_models/templates/sneLineList.txt", env="LINE_LIST_PATH")
 
     # ML Configuration Parameters
     # DASH model parameters
