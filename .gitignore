@@ -21,6 +21,7 @@ batch_upload.zip
 prod_backend/data/*
 data/*
 astrodash_old/
+test_set/
 
 # Ignore OS files
 .DS_Store

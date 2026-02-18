@@ -369,6 +369,16 @@ class OSCSpectrumRepository(SpectrumRepository):
             data = response.json()
             logger.debug(f"OSC repository: Raw API response for {osc_ref}: {data}")
 
+            # Resolve API key case-insensitively (match comparison script) so we load the same spectrum
+            if obj_name not in data:
+                for key in data.keys():
+                    if getattr(key, "upper", lambda: key)() == obj_name:
+                        obj_name = key
+                        break
+                else:
+                    logger.error(f"OSC API response has no key for {sn_name.upper()}")
+                    return None
+
             # Parse using the actual API response structure
             try:
                 # The API returns: {"SN2002ER": {"spectra": [["52512", [["wavelength", "flux"], ...]]]}}
@@ -386,11 +396,24 @@ class OSCSpectrumRepository(SpectrumRepository):
                 logger.error(f"Response structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
                 return None
 
-            # Extract redshift if available (default to 0.0 as in reference)
-            redshift = 0.0  # Redshift needs to be fetched separately as per reference
+            # Fetch redshift from OSC API (same as comparison script) so web matches script results
+            redshift = 0.0
+            try:
+                # Use same key as spectra (API may be case-sensitive)
+                z_url = f"{self.base_url}/{obj_name}/redshift"
+                z_response = requests.get(z_url, verify=False, timeout=10)
+                if z_response.status_code == 200:
+                    z_data = z_response.json()
+                    if obj_name in z_data and "redshift" in z_data[obj_name]:
+                        z_list = z_data[obj_name]["redshift"]
+                        if z_list and len(z_list) > 0:
+                            redshift = float(z_list[0]["value"])
+                            logger.debug(f"OSC repository: Fetched redshift {redshift} for {osc_ref}")
+            except Exception as e:
+                logger.debug(f"OSC repository: Could not fetch redshift for {osc_ref}: {e}, using 0.0")
 
             # Extract object name for filename
-            obj_name = data.get('name', obj_name)
+            obj_name = data.get("name", obj_name)
 
             # Generate spectrum ID using just the SN name to avoid duplicates
             spectrum_id = f"osc_{sn_name}"

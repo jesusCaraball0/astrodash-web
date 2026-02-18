@@ -81,10 +81,14 @@ class SpectrumProcessingService:
             y = normalise_spectrum(y)
             logger.debug("Applied spectrum normalization")
 
-            # Apply redshift if provided
-            if z_value is not None:
+            # Apply redshift from request only for non-OSC spectra (uploaded files).
+            # For OSC spectra we keep the redshift fetched from the OSC API so web matches script.
+            is_osc = bool(getattr(spectrum, "osc_ref", None) or (getattr(spectrum, "meta", None) or {}).get("source") == "osc")
+            if z_value is not None and not is_osc:
                 spectrum.redshift = float(z_value)
                 logger.debug(f"Applied redshift: {z_value}")
+            elif is_osc and z_value is not None:
+                logger.debug(f"Keeping OSC redshift {spectrum.redshift} (ignoring request zValue={z_value})")
 
             # Update spectrum with processed data
             spectrum.x = x.tolist()
@@ -119,37 +123,22 @@ class SpectrumProcessingService:
         max_wave: Optional[float]
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Apply wavelength filtering to spectrum data.
-
-        Args:
-            x: Wavelength array
-            y: Flux array
-            min_wave: Minimum wavelength (None = no lower limit)
-            max_wave: Maximum wavelength (None = no upper limit)
-
-        Returns:
-            Tuple of (filtered_wavelength, filtered_flux)
+        Apply wavelength filtering by zeroing flux outside the range (preserve length).
+        Matches script/data_processor behavior so classification matches compare_tf_pytorch_training_set.
         """
         if min_wave is None and max_wave is None:
             return x, y
 
-        mask = np.ones(len(x), dtype=bool)
+        y_out = np.copy(y)
+        if min_wave is not None and np.isfinite(min_wave):
+            min_idx = np.clip(np.abs(x - min_wave).argmin(), 0, len(y_out) - 1)
+            y_out[:min_idx] = 0.0
+        if max_wave is not None and np.isfinite(max_wave):
+            max_idx = np.clip(np.abs(x - max_wave).argmin(), 0, len(y_out) - 1)
+            y_out[max_idx:] = 0.0
 
-        if min_wave is not None:
-            mask &= (x >= min_wave)
-
-        if max_wave is not None:
-            mask &= (x <= max_wave)
-
-        # Filter both wavelength and flux arrays
-        x_filtered = x[mask]
-        y_filtered = y[mask]
-
-        logger.debug(f"Wavelength filtering: {len(x)} -> {len(x_filtered)} points")
-        if len(x_filtered) > 0:
-            logger.debug(f"Filtered wavelength range: {x_filtered.min():.2f} - {x_filtered.max():.2f}")
-
-        return x_filtered, y_filtered
+        logger.debug(f"Wavelength filtering: zeroed flux outside range (length unchanged: {len(x)})")
+        return x, y_out
 
     def _apply_smoothing(
         self,
