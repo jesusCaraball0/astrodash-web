@@ -18,6 +18,10 @@ astrodash
 #Ignore testing files
 batch_upload.zip
 
+prod_backend/data/*
+data/*
+astrodash_old/
+
 # Ignore OS files
 .DS_Store
 Thumbs.db

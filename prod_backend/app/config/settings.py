@@ -48,8 +48,8 @@ class Settings(BaseSettings):
 
     # ML Model Paths (External data directory)
     user_model_dir: str = Field("../data/user_models", env="USER_MODEL_DIR")
-    dash_model_path: str = Field("../data/pre_trained_models/dash/pytorch_model.pth", env="DASH_MODEL_PATH")  # DASH model
-    dash_training_params_path: str = Field("../data/pre_trained_models/dash/training_params.pickle", env="DASH_TRAINING_PARAMS_PATH")  # DASH params
+    dash_model_path: str = Field("../data/pre_trained_models/dash/zeroZ/pytorch_model.pth", env="DASH_MODEL_PATH")  # DASH model (zeroZ = converted from TF, matches original)
+    dash_training_params_path: str = Field("../data/pre_trained_models/dash/zeroZ/training_params.pickle", env="DASH_TRAINING_PARAMS_PATH")  # DASH params
     transformer_model_path: str = Field("../data/pre_trained_models/transformer/TF_wiserep_v6.pt", env="TRANSFORMER_MODEL_PATH")
 
     # Template and Line List Paths (External data directory)

@@ -450,244 +450,376 @@ def load_lnw_spectra(training_set_dir: Path, templist_path: Path,
 
 class TFStylePreprocessor:
     """
-    Preprocessing matching original DASH TensorFlow implementation.
-    This replicates the preprocessing from the original astrodash package.
+    Preprocessing matching the original DASH TensorFlow implementation
+    used in astrodash_old.PreProcessing.two_column_data + PreProcessSpectrum.
     """
-    
-    def __init__(self, w0: float, w1: float, nw: int, num_spline_points: int = 13):
+
+    def __init__(self, w0: float, w1: float, nw: int, num_spline_points: int = 13, smooth: int = 6):
         self.w0 = w0
         self.w1 = w1
         self.nw = nw
         self.num_spline_points = num_spline_points
-    
-    def log_wavelength(self, wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray, int, int]:
-        """Bin to log-wavelength grid."""
-        dwlog = np.log(self.w1 / self.w0) / self.nw
-        wlog = self.w0 * np.exp(np.arange(0, self.nw) * dwlog)
-        binned_flux = np.interp(wlog, wave, flux, left=0, right=0)
-        
-        non_zero = np.where(binned_flux != 0)[0]
-        if len(non_zero) == 0:
-            return wlog, binned_flux, 0, 0
-        
-        min_idx = non_zero[0]
-        max_idx = non_zero[-1]
-        
-        return wlog, binned_flux, min_idx, max_idx
-    
-    def continuum_removal(self, wave: np.ndarray, flux: np.ndarray, 
-                          min_idx: int, max_idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        """Remove continuum using spline fitting."""
-        from scipy.interpolate import splrep, splev
-        
-        wave_region = wave[min_idx:max_idx + 1]
-        flux_region = flux[min_idx:max_idx + 1]
-        
-        if len(wave_region) > self.num_spline_points:
-            indices = np.linspace(0, len(wave_region) - 1, self.num_spline_points, dtype=int)
-            spline = splrep(wave_region[indices], flux_region[indices], k=3)
-            continuum = splev(wave_region, spline)
-        else:
-            continuum = np.full_like(flux_region, np.mean(flux_region))
-        
-        full_continuum = np.zeros_like(flux)
-        full_continuum[min_idx:max_idx + 1] = continuum
-        
-        return flux - full_continuum, full_continuum
-    
-    def mean_zero(self, flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
-        """Zero-mean the flux."""
-        flux_out = np.copy(flux)
-        flux_out[:min_idx] = flux_out[min_idx]
-        flux_out[max_idx:] = flux_out[max_idx]
-        valid_mean = np.mean(flux_out[min_idx:max_idx + 1])
-        return flux_out - valid_mean
-    
-    def apodize(self, flux: np.ndarray, min_idx: int, max_idx: int, 
-                edge_width: int = 50) -> np.ndarray:
-        """Apply cosine taper at edges."""
-        apodized = np.copy(flux)
-        actual_edge = min(edge_width, (max_idx - min_idx) // 4)
-        
-        if actual_edge > 0:
-            for i in range(actual_edge):
-                factor = 0.5 * (1 + np.cos(np.pi * i / actual_edge))
-                if min_idx + i < len(apodized):
-                    apodized[min_idx + i] *= factor
-                if max_idx - i >= 0:
-                    apodized[max_idx - i] *= factor
-        
-        return apodized
-    
-    def normalise(self, flux: np.ndarray) -> np.ndarray:
-        """Normalize to [0, 1]."""
-        flux_min, flux_max = np.min(flux), np.max(flux)
-        if np.isclose(flux_min, flux_max):
+        self.dwlog = np.log(w1 / w0) / nw
+        # Use the same default smoothing as typical astrodash usage
+        self.smooth = smooth
+
+    # ---- Low-level helpers mirroring astrodash_old ----
+
+    def _normalise(self, flux: np.ndarray) -> np.ndarray:
+        """Match astrodash_old.array_tools.normalise_spectrum."""
+        if flux.size == 0 or np.min(flux) == np.max(flux):
             return np.zeros_like(flux)
-        return (flux - flux_min) / (flux_max - flux_min)
-    
-    def zero_non_overlap(self, flux: np.ndarray, min_idx: int, max_idx: int, 
-                         outer_val: float = 0.5) -> np.ndarray:
-        """Set regions outside valid range to outer_val."""
+        return (flux - np.min(flux)) / (np.max(flux) - np.min(flux))
+
+    def _limit_wavelength_range(self, wave: np.ndarray, flux: np.ndarray,
+                                min_wave: float, max_wave: float) -> np.ndarray:
+        """Match astrodash_old.sn_processing.limit_wavelength_range."""
+        min_idx = int(np.abs(wave - min_wave).argmin())
+        max_idx = int(np.abs(wave - max_wave).argmin())
         flux_out = np.copy(flux)
-        flux_out[:min_idx] = outer_val
-        flux_out[max_idx:] = outer_val
+        flux_out[:min_idx] = 0.0
+        flux_out[max_idx:] = 0.0
         return flux_out
-    
-    def process(self, wave: np.ndarray, flux: np.ndarray, z: float = 0.0) -> Tuple[np.ndarray, int, int]:
-        """Full preprocessing pipeline."""
+
+    def _two_col_input_spectrum(self, wave: np.ndarray, flux: np.ndarray, z: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Match astrodash_old.preprocessing.ReadSpectrumFile.two_col_input_spectrum,
+        assuming wave/flux arrays are already loaded.
+        """
         # Deredshift
-        wave_dereds = wave / (1 + z)
-        
-        # Normalize first (original DASH normalizes input)
-        flux_norm = self.normalise(flux)
-        
-        # Log wavelength binning
-        binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength(wave_dereds, flux_norm)
-        
-        # Continuum removal
-        new_flux, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
-        
-        # Mean zero
-        mean_zero_flux = self.mean_zero(new_flux, min_idx, max_idx)
-        
-        # Apodize
-        apodized = self.apodize(mean_zero_flux, min_idx, max_idx)
-        
-        # Final normalization
-        final_flux = self.normalise(apodized)
-        
-        # Zero non-overlap
-        final_flux = self.zero_non_overlap(final_flux, min_idx, max_idx, 0.5)
-        
+        wave_new = wave / (1.0 + z)
+        # Restrict to [w0, w1]
+        mask = (wave_new >= self.w0) & (wave_new < self.w1)
+        wave_new = wave_new[mask]
+        flux_new = flux[mask]
+        if wave_new.size == 0:
+            raise ValueError(
+                f"Spectrum out of model wavelength range [{self.w0}, {self.w1}] after deredshifting (z={z})."
+            )
+        # Normalise again
+        flux_new = self._normalise(flux_new)
+        return wave_new, flux_new
+
+    def _log_wavelength(self, wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray, int, int]:
+        """
+        Log-wavelength binning. This approximates astrodash_old.PreProcessSpectrum.log_wavelength
+        using interpolation onto the same log grid.
+        """
+        wlog = self.w0 * np.exp(np.arange(0, self.nw) * self.dwlog)
+        binned_flux = np.interp(wlog, wave, flux, left=0.0, right=0.0)
+        non_zero = np.where(binned_flux != 0.0)[0]
+        if non_zero.size == 0:
+            return wlog, binned_flux, 0, 0
+        min_idx = int(non_zero[0])
+        max_idx = int(non_zero[-1])
+        return wlog, binned_flux, min_idx, max_idx
+
+    def _continuum_removal(self, wave: np.ndarray, flux: np.ndarray,
+                           min_idx: int, max_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Match astrodash_old.PreProcessSpectrum.continuum_removal:
+        - shift flux by +1
+        - spline-fit continuum in [min_idx, max_idx]
+        - divide by continuum
+        - normalise (minus 1) and zero outside [min_idx, max_idx]
+        """
+        from scipy.interpolate import UnivariateSpline
+
+        flux_plus = flux + 1.0
+        cont_removed = np.copy(flux_plus)
+
+        continuum = np.zeros_like(flux_plus)
+        if max_idx - min_idx > 5:
+            spline = UnivariateSpline(
+                wave[min_idx:max_idx + 1], flux_plus[min_idx:max_idx + 1], k=3
+            )
+            spline_wave = np.linspace(wave[min_idx], wave[max_idx],
+                                      num=self.num_spline_points, endpoint=True)
+            spline_points = spline(spline_wave)
+            spline_more = UnivariateSpline(spline_wave, spline_points, k=3)
+            spline_points_more = spline_more(wave[min_idx:max_idx + 1])
+            continuum[min_idx:max_idx + 1] = spline_points_more
+        else:
+            # Fallback: flat continuum
+            continuum[min_idx:max_idx + 1] = 1.0
+
+        valid = continuum[min_idx:max_idx + 1] != 0
+        if np.any(valid):
+            cont_removed[min_idx:max_idx + 1][valid] = (
+                flux_plus[min_idx:max_idx + 1][valid] / continuum[min_idx:max_idx + 1][valid]
+            )
+
+        # Normalise cont_removed - 1 and zero outside region
+        cont_removed_norm = self._normalise(cont_removed - 1.0)
+        cont_removed_norm[:min_idx] = 0.0
+        cont_removed_norm[max_idx + 1:] = 0.0
+
+        return cont_removed_norm, continuum - 1.0
+
+    def _mean_zero(self, flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
+        """Match astrodash_old.PreProcessSpectrum.mean_zero."""
+        if max_idx <= min_idx or max_idx >= flux.size:
+            return flux
+        mean_flux = np.mean(flux[min_idx:max_idx])
+        out = flux - mean_flux
+        out[:min_idx] = flux[:min_idx]
+        out[max_idx + 1:] = flux[max_idx + 1:]
+        return out
+
+    def _apodize(self, flux: np.ndarray, min_idx: int, max_idx: int, outer_val: float = 0.0) -> np.ndarray:
+        """
+        Match astrodash_old.PreProcessSpectrum.apodize (5% cosine bell),
+        with optional outer_val and zeroing outside [min_idx, max_idx].
+        """
+        percent = 0.05
+        out = np.copy(flux) - outer_val
+        nsquash = int(self.nw * percent)
+        for i in range(nsquash):
+            if nsquash <= 1:
+                break
+            arg = np.pi * i / (nsquash - 1)
+            factor = 0.5 * (1.0 - np.cos(arg))
+            if (min_idx + i < self.nw) and (max_idx - i >= 0):
+                out[min_idx + i] = factor * out[min_idx + i]
+                out[max_idx - i] = factor * out[max_idx - i]
+            else:
+                break
+
+        if outer_val != 0.0:
+            out = out + outer_val
+            # zero_non_overlap_part semantics
+            out[:min_idx] = outer_val
+            out[max_idx + 1:] = outer_val
+        return out
+
+    # ---- Public API used by the comparison script ----
+
+    def process(self, wave: np.ndarray, flux: np.ndarray, z: float = 0.0) -> Tuple[np.ndarray, int, int]:
+        """
+        Full TF-style preprocessing pipeline, mirroring:
+        astrodash_old.sn_processing.PreProcessing.two_column_data.
+        """
+        from scipy.signal import medfilt
+
+        # 1) Initial normalisation and wavelength limiting
+        flux_norm = self._normalise(flux)
+        flux_limited = self._limit_wavelength_range(wave, flux_norm, self.w0, self.w1)
+
+        # 2) Smoothing with median filter (same kernel logic)
+        w_density = (self.w1 - self.w0) / self.nw
+        wavelength_density = (np.max(wave) - np.min(wave)) / max(len(wave), 1)
+        if wavelength_density <= 0:
+            filter_size = 1
+        else:
+            filter_size = int(w_density / wavelength_density * self.smooth / 2) * 2 + 1
+        if filter_size < 1:
+            filter_size = 1
+        # medfilt requires odd kernel size
+        if filter_size % 2 == 0:
+            filter_size += 1
+        pre_filtered = medfilt(flux_limited, kernel_size=filter_size)
+
+        # 3) Deredshift + clip + re-normalise
+        wave_dereds, flux_dereds = self._two_col_input_spectrum(wave, pre_filtered, z)
+
+        # 4) Log-wavelength binning
+        binned_wave, binned_flux, min_idx, max_idx = self._log_wavelength(wave_dereds, flux_dereds)
+
+        # Guard against completely empty or pathological spectra
+        if min_idx == max_idx == 0 and not np.any(binned_flux):
+            return np.full(self.nw, 0.5, dtype=float), 0, 0
+
+        # 5) Continuum removal
+        cont_removed, _ = self._continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
+
+        # 6) Mean zero
+        mean_zero_flux = self._mean_zero(cont_removed, min_idx, max_idx)
+
+        # 7) Apodize (no outer value at this stage)
+        apodized = self._apodize(mean_zero_flux, min_idx, max_idx, outer_val=0.0)
+
+        # 8) Final normalisation and zero_non_overlap_part with outerVal=0.5
+        final_flux = self._normalise(apodized)
+        final_flux[:min_idx] = 0.5
+        final_flux[max_idx + 1:] = 0.5
+
         return final_flux, min_idx, max_idx
 
 
 class ProdBackendPreprocessor:
     """
-    Preprocessing matching prod_backend/app/infrastructure/ml/data_processor.py
-    This is what the current app uses.
+    Preprocessing intended to mirror what the production backend *should*
+    be doing for DASH, but reimplemented here with the same logic as the
+    original DASH TF pipeline (no delegation to TFStylePreprocessor).
     """
-    
-    def __init__(self, w0: float, w1: float, nw: int, num_spline_points: int = 13):
+
+    def __init__(self, w0: float, w1: float, nw: int, num_spline_points: int = 13, smooth: int = 6):
         self.w0 = w0
         self.w1 = w1
         self.nw = nw
         self.num_spline_points = num_spline_points
-    
-    def normalise_spectrum(self, flux: np.ndarray) -> np.ndarray:
-        """Normalize flux array to [0, 1] range."""
-        flux_min, flux_max = np.min(flux), np.max(flux)
-        if np.isclose(flux_min, flux_max):
-            return np.zeros(len(flux))
-        return (flux - flux_min) / (flux_max - flux_min)
-    
-    def log_wavelength_binning(self, wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray, int, int]:
-        """Bin flux to log-wavelength grid."""
-        dwlog = np.log(self.w1 / self.w0) / self.nw
-        wlog = self.w0 * np.exp(np.arange(0, self.nw) * dwlog)
-        binned_flux = np.interp(wlog, wave, flux, left=0, right=0)
-        
-        non_zero = np.where(binned_flux != 0)[0]
-        if len(non_zero) == 0:
+        self.dwlog = np.log(w1 / w0) / nw
+        self.smooth = smooth
+
+    # ---- Helpers modelled after astrodash_old ----
+
+    def _normalise(self, flux: np.ndarray) -> np.ndarray:
+        if flux.size == 0 or np.min(flux) == np.max(flux):
+            return np.zeros_like(flux)
+        return (flux - np.min(flux)) / (np.max(flux) - np.min(flux))
+
+    def _limit_wavelength_range(self, wave: np.ndarray, flux: np.ndarray,
+                                min_wave: float, max_wave: float) -> np.ndarray:
+        min_idx = int(np.abs(wave - min_wave).argmin())
+        max_idx = int(np.abs(wave - max_wave).argmin())
+        out = np.copy(flux)
+        out[:min_idx] = 0.0
+        out[max_idx:] = 0.0
+        return out
+
+    def _two_col_input_spectrum(self, wave: np.ndarray, flux: np.ndarray, z: float) -> Tuple[np.ndarray, np.ndarray]:
+        # Deredshift and clip to [w0, w1], then renormalise
+        wave_new = wave / (1.0 + z)
+        mask = (wave_new >= self.w0) & (wave_new < self.w1)
+        wave_new = wave_new[mask]
+        flux_new = flux[mask]
+        if wave_new.size == 0:
+            raise ValueError(
+                f"Spectrum out of wavelength range [{self.w0}, {self.w1}] after deredshifting (z={z})."
+            )
+        flux_new = self._normalise(flux_new)
+        return wave_new, flux_new
+
+    def _log_wavelength_binning(self, wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray, int, int]:
+        wlog = self.w0 * np.exp(np.arange(0, self.nw) * self.dwlog)
+        binned_flux = np.interp(wlog, wave, flux, left=0.0, right=0.0)
+        non_zero = np.where(binned_flux != 0.0)[0]
+        if non_zero.size == 0:
             return wlog, binned_flux, 0, 0
-        
-        min_idx = non_zero[0]
-        max_idx = non_zero[-1]
-        
+        min_idx = int(non_zero[0])
+        max_idx = int(non_zero[-1])
         return wlog, binned_flux, min_idx, max_idx
-    
-    def continuum_removal(self, wave: np.ndarray, flux: np.ndarray, 
-                          min_idx: int, max_idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        """Remove continuum using spline fitting."""
-        from scipy.interpolate import splrep, splev
-        
-        min_idx = np.clip(min_idx, 0, len(flux) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(flux) - 1)
-        
-        wave_region = wave[min_idx:max_idx + 1]
-        flux_region = flux[min_idx:max_idx + 1]
-        
-        if len(wave_region) > self.num_spline_points:
-            indices = np.linspace(0, len(wave_region) - 1, self.num_spline_points, dtype=int)
-            spline = splrep(wave_region[indices], flux_region[indices], k=3)
-            continuum = splev(wave_region, spline)
+
+    def _continuum_removal(self, wave: np.ndarray, flux: np.ndarray,
+                           min_idx: int, max_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        from scipy.interpolate import UnivariateSpline
+
+        flux_plus = flux + 1.0
+        cont_removed = np.copy(flux_plus)
+
+        continuum = np.zeros_like(flux_plus)
+        if max_idx - min_idx > 5:
+            spline = UnivariateSpline(
+                wave[min_idx:max_idx + 1], flux_plus[min_idx:max_idx + 1], k=3
+            )
+            spline_wave = np.linspace(wave[min_idx], wave[max_idx],
+                                      num=self.num_spline_points, endpoint=True)
+            spline_points = spline(spline_wave)
+            spline_more = UnivariateSpline(spline_wave, spline_points, k=3)
+            spline_points_more = spline_more(wave[min_idx:max_idx + 1])
+            continuum[min_idx:max_idx + 1] = spline_points_more
         else:
-            continuum = np.full_like(flux_region, np.mean(flux_region))
-        
-        full_continuum = np.zeros_like(flux)
-        full_continuum[min_idx:max_idx + 1] = continuum
-        
-        return flux - full_continuum, full_continuum
-    
-    def mean_zero(self, flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
-        """Zero-mean the flux array within the specified region."""
-        flux_out = np.copy(flux)
-        min_idx = np.clip(min_idx, 0, len(flux_out) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(flux_out) - 1)
-        
-        flux_out[:min_idx] = flux_out[min_idx]
-        flux_out[max_idx:] = flux_out[max_idx]
-        valid_mean = np.mean(flux_out[min_idx:max_idx + 1])
-        return flux_out - valid_mean
-    
-    def apodize(self, flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
-        """Apply apodization to reduce edge effects."""
-        apodized = np.copy(flux)
-        min_idx = np.clip(min_idx, 0, len(apodized) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(apodized) - 1)
-        
-        edge_width = min(50, (max_idx - min_idx) // 4)
-        
-        if edge_width > 0:
-            for i in range(edge_width):
-                factor = 0.5 * (1 + np.cos(np.pi * i / edge_width))
-                left_idx = min_idx + i
-                if 0 <= left_idx < len(apodized):
-                    apodized[left_idx] *= factor
-                right_idx = max_idx - i
-                if 0 <= right_idx < len(apodized):
-                    apodized[right_idx] *= factor
-        
-        return apodized
-    
-    def zero_non_overlap_part(self, array: np.ndarray, min_idx: int, max_idx: int, 
-                              outer_val: float = 0.5) -> np.ndarray:
-        """Set regions outside the valid range to a specified value."""
+            continuum[min_idx:max_idx + 1] = 1.0
+
+        valid = continuum[min_idx:max_idx + 1] != 0
+        if np.any(valid):
+            cont_removed[min_idx:max_idx + 1][valid] = (
+                flux_plus[min_idx:max_idx + 1][valid] / continuum[min_idx:max_idx + 1][valid]
+            )
+
+        cont_removed_norm = self._normalise(cont_removed - 1.0)
+        cont_removed_norm[:min_idx] = 0.0
+        cont_removed_norm[max_idx + 1:] = 0.0
+
+        return cont_removed_norm, continuum - 1.0
+
+    def _mean_zero(self, flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
+        if max_idx <= min_idx or max_idx >= flux.size:
+            return flux
+        mean_flux = np.mean(flux[min_idx:max_idx])
+        out = flux - mean_flux
+        out[:min_idx] = flux[:min_idx]
+        out[max_idx + 1:] = flux[max_idx + 1:]
+        return out
+
+    def _apodize(self, flux: np.ndarray, min_idx: int, max_idx: int, outer_val: float = 0.0) -> np.ndarray:
+        percent = 0.05
+        out = np.copy(flux) - outer_val
+        nsquash = int(self.nw * percent)
+        for i in range(nsquash):
+            if nsquash <= 1:
+                break
+            arg = np.pi * i / (nsquash - 1)
+            factor = 0.5 * (1.0 - np.cos(arg))
+            if (min_idx + i < self.nw) and (max_idx - i >= 0):
+                out[min_idx + i] = factor * out[min_idx + i]
+                out[max_idx - i] = factor * out[max_idx - i]
+            else:
+                break
+
+        if outer_val != 0.0:
+            out = out + outer_val
+            out[:min_idx] = outer_val
+            out[max_idx + 1:] = outer_val
+        return out
+
+    def _zero_non_overlap_part(self, array: np.ndarray, min_idx: int, max_idx: int,
+                               outer_val: float = 0.5) -> np.ndarray:
         sliced = np.copy(array)
-        min_idx = np.clip(min_idx, 0, len(sliced) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(sliced) - 1)
         sliced[:min_idx] = outer_val
-        sliced[max_idx:] = outer_val
+        sliced[max_idx + 1:] = outer_val
         return sliced
-    
+
+    # ---- Public API (used by the script) ----
+
     def process(self, wave: np.ndarray, flux: np.ndarray, z: float = 0.0) -> Tuple[np.ndarray, int, int]:
-        """Full preprocessing pipeline (matching prod_backend)."""
-        # Normalize input spectrum
-        flux_processed = self.normalise_spectrum(flux)
-        
-        # Deredshift
-        wave_dereds = wave / (1 + z)
-        
-        # Log wavelength binning
-        binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(wave_dereds, flux_processed)
-        
-        # Continuum removal
-        new_flux, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
-        
-        # Mean zero
-        mean_zero_flux = self.mean_zero(new_flux, min_idx, max_idx)
-        
-        # Apodize
-        apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
-        
-        # Final normalization
-        flux_norm = self.normalise_spectrum(apodized_flux)
-        
-        # Zero non-overlap
-        flux_norm = self.zero_non_overlap_part(flux_norm, min_idx, max_idx, 0.5)
-        
-        return flux_norm, min_idx, max_idx
+        """
+        Full preprocessing pipeline, reimplemented here to mirror the
+        original DASH logic (same as TFStylePreprocessor.process, but
+        implemented independently).
+        """
+        from scipy.signal import medfilt
+
+        # 1) Initial normalisation and wavelength limiting
+        flux_norm = self._normalise(flux)
+        flux_limited = self._limit_wavelength_range(wave, flux_norm, self.w0, self.w1)
+
+        # 2) Smoothing with median filter (same kernel logic)
+        w_density = (self.w1 - self.w0) / self.nw
+        wavelength_density = (np.max(wave) - np.min(wave)) / max(len(wave), 1)
+        if wavelength_density <= 0:
+            filter_size = 1
+        else:
+            filter_size = int(w_density / wavelength_density * self.smooth / 2) * 2 + 1
+        if filter_size < 1:
+            filter_size = 1
+        if filter_size % 2 == 0:
+            filter_size += 1
+        pre_filtered = medfilt(flux_limited, kernel_size=filter_size)
+
+        # 3) Deredshift + clip + re-normalise
+        wave_dereds, flux_dereds = self._two_col_input_spectrum(wave, pre_filtered, z)
+
+        # 4) Log-wavelength binning
+        binned_wave, binned_flux, min_idx, max_idx = self._log_wavelength_binning(wave_dereds, flux_dereds)
+
+        if min_idx == max_idx == 0 and not np.any(binned_flux):
+            return np.full(self.nw, 0.5, dtype=float), 0, 0
+
+        # 5) Continuum removal
+        cont_removed, _ = self._continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
+
+        # 6) Mean zero
+        mean_zero_flux = self._mean_zero(cont_removed, min_idx, max_idx)
+
+        # 7) Apodize
+        apodized = self._apodize(mean_zero_flux, min_idx, max_idx, outer_val=0.0)
+
+        # 8) Final normalisation and zero_non_overlap_part with outerVal=0.5
+        final_flux = self._normalise(apodized)
+        final_flux = self._zero_non_overlap_part(final_flux, min_idx, max_idx, outer_val=0.5)
+
+        return final_flux, min_idx, max_idx
 
 
 # =============================================================================
@@ -852,6 +984,65 @@ def decode_label(label_idx: int, type_list: List[str], min_age: float,
 # Main Comparison Script
 # =============================================================================
 
+def run_preprocessor_parity_check(
+    params: Dict[str, Any],
+    num_samples: int,
+    templist_path: Path,
+) -> None:
+    """
+    Quick test: compare TFStylePreprocessor vs DashSpectrumProcessor
+    on a small subset of .lnw training spectra.
+    """
+    # Local import so that sys.path can be configured first
+    from app.infrastructure.ml.data_processor import DashSpectrumProcessor
+
+    w0 = params["w0"]
+    w1 = params["w1"]
+    nw = params["nw"]
+
+    print("\n" + "=" * 70)
+    print("DashSpectrumProcessor vs TFStylePreprocessor parity check")
+    print("=" * 70)
+    print(f"Using w0={w0}, w1={w1}, nw={nw}, num_samples={num_samples}")
+
+    tf_preproc = TFStylePreprocessor(w0, w1, nw)
+    dash_preproc = DashSpectrumProcessor(w0, w1, nw)
+
+    lnw_spectra = load_lnw_spectra(TRAINING_SET_DIR, templist_path, num_samples)
+    if not lnw_spectra:
+        print("No .lnw spectra loaded for parity check.")
+        return
+
+    diffs = []
+    for i, spec in enumerate(lnw_spectra):
+        wave, flux, z = spec.wave, spec.flux, spec.redshift
+        tf_flux, tf_min, tf_max = tf_preproc.process(wave, flux, z)
+        dash_flux, d_min, d_max, _ = dash_preproc.process(wave, flux, z, smooth=6)
+
+        mean_diff = float(np.mean(np.abs(tf_flux - dash_flux)))
+        max_diff = float(np.max(np.abs(tf_flux - dash_flux)))
+        corr = (
+            float(np.corrcoef(tf_flux, dash_flux)[0, 1])
+            if np.std(tf_flux) > 0 and np.std(dash_flux) > 0
+            else 1.0
+        )
+        diffs.append((mean_diff, max_diff, corr))
+
+        print(f"\n[{i+1}/{len(lnw_spectra)}] {spec.filename}")
+        print(f"  TF   min/max idx: [{tf_min}, {tf_max}]")
+        print(f"  Dash min/max idx: [{d_min}, {d_max}]")
+        print(f"  mean_abs_diff={mean_diff:.6e}, max_abs_diff={max_diff:.6e}, corr={corr:.6f}")
+
+    if diffs:
+        mean_mean_diff = np.mean([d[0] for d in diffs])
+        mean_max_diff = np.mean([d[1] for d in diffs])
+        mean_corr = np.mean([d[2] for d in diffs])
+        print("\nParity summary over .lnw samples:")
+        print(f"  mean(mean_abs_diff) = {mean_mean_diff:.6e}")
+        print(f"  mean(max_abs_diff)  = {mean_max_diff:.6e}")
+        print(f"  mean(correlation)   = {mean_corr:.6f}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Compare TF and PyTorch DASH models')
     parser.add_argument('--model_dir', type=str, default='zeroZ', 
@@ -862,22 +1053,41 @@ def main():
                         help='Print detailed per-spectrum results')
     parser.add_argument('--skip_osc', action='store_true',
                         help='Skip OSC API fetching (for offline testing)')
+    parser.add_argument('--test_preprocessor_only', action='store_true',
+                        help='Run DashSpectrumProcessor vs TFStylePreprocessor parity check on .lnw and exit')
+    parser.add_argument('--use_prod_backend_model', action='store_true',
+                        help='Use the same model paths as production backend (dash/pytorch_model.pth instead of dash/zeroZ/pytorch_model.pth)')
     args = parser.parse_args()
     
-    # Paths
+    # Paths - choose based on flag
     original_tf_dir = MODELS_DIR / "original_dash_models" / args.model_dir
-    converted_pytorch_dir = MODELS_DIR / "dash" / args.model_dir
-    
     tf_model_path = original_tf_dir / "tensorflow_model.ckpt"
-    pytorch_model_path = converted_pytorch_dir / "pytorch_model.pth"
-    params_path = original_tf_dir / "training_params.pickle"
+
+    if args.use_prod_backend_model:
+        # PyTorch + params from prod backend (same as web app); TF from original for comparison
+        pytorch_model_path = MODELS_DIR / "dash" / "pytorch_model.pth"
+        params_path = MODELS_DIR / "dash" / "training_params.pickle"
+        print("\n📌 Using PROD BACKEND model (same as web application):")
+        print(f"   PyTorch model: {pytorch_model_path}")
+        print(f"   Training params: {params_path}")
+        print(f"   TF model (for comparison): {tf_model_path}")
+    else:
+        # All from original comparison paths
+        converted_pytorch_dir = MODELS_DIR / "dash" / args.model_dir
+        pytorch_model_path = converted_pytorch_dir / "pytorch_model.pth"
+        params_path = original_tf_dir / "training_params.pickle"
+    
     templist_path = TRAINING_SET_DIR / "templist.txt"
     
-    # Validate paths
-    for path, name in [(tf_model_path.with_suffix('.ckpt.index'), 'TF model'),
-                       (pytorch_model_path, 'PyTorch model'),
-                       (params_path, 'Training params'),
-                       (templist_path, 'Template list')]:
+    # Validate paths (always require TF model so we can compare prod PyTorch vs original TF)
+    required_paths = [
+        (tf_model_path.with_suffix('.ckpt.index'), 'TF model'),
+        (pytorch_model_path, 'PyTorch model'),
+        (params_path, 'Training params'),
+        (templist_path, 'Template list')
+    ]
+    
+    for path, name in required_paths:
         if not path.exists():
             print(f"Error: {name} not found at {path}")
             sys.exit(1)
@@ -908,11 +1118,18 @@ def main():
     print(f"  Age bin size: {age_bin_size} days")
     print(f"  Number of age bins: {num_age_bins}")
     print(f"  Total output classes: {total_classes}")
+
+    # Optional: just test preprocessor parity and exit
+    if args.test_preprocessor_only:
+        run_preprocessor_parity_check(params, args.num_samples, templist_path)
+        return
     
     # Load models
     print("\nLoading models...")
     tf_model = TensorFlowModel(str(tf_model_path))
+    print("  ✓ TensorFlow model loaded")
     pytorch_model = PyTorchModel(str(pytorch_model_path), n_types=total_classes)
+    print("  ✓ PyTorch model loaded")
     
     # Initialize preprocessors
     tf_preprocessor = TFStylePreprocessor(w0, w1, nw)
@@ -1142,7 +1359,7 @@ def main():
         same_corr = np.mean([c['correlation'] for c in same])
         same_match = sum(c['top1_match'] for c in same)
         same_top5 = np.mean([c['top5_overlap'] for c in same])
-        print(f"  Model outputs (SAME preprocessing):")
+        print(f"  Model outputs (SAME preprocessing - TF vs PyTorch):")
         print(f"    Mean diff: avg={same_mean:.6f}, max={same_max:.6f}")
         print(f"    Correlation: avg={same_corr:.6f}")
         print(f"    Top-1 match: {same_match}/{len(same)} ({100*same_match/len(same):.1f}%)")
@@ -1154,7 +1371,7 @@ def main():
         diff_corr = np.mean([c['correlation'] for c in diff])
         diff_match = sum(c['top1_match'] for c in diff)
         diff_top5 = np.mean([c['top5_overlap'] for c in diff])
-        print(f"  Model outputs (DIFFERENT preprocessing):")
+        print(f"  Model outputs (DIFFERENT preprocessing - TF vs PyTorch):")
         print(f"    Mean diff: avg={diff_mean:.6f}, max={diff_max:.6f}")
         print(f"    Correlation: avg={diff_corr:.6f}")
         print(f"    Top-1 match: {diff_match}/{len(diff)} ({100*diff_match/len(diff):.1f}%)")
@@ -1182,11 +1399,11 @@ def main():
         print(f"\nPreprocessing (TF vs prod_backend):")
         print(f"  Correlation: avg={np.mean([c['correlation'] for c in all_preproc]):.6f}")
         
-        print(f"\nModel outputs (SAME preprocessing):")
+        print(f"\nModel outputs (SAME preprocessing - TF vs PyTorch):")
         print(f"  Correlation: avg={np.mean([c['correlation'] for c in all_same]):.6f}")
         print(f"  Top-1 match: {sum(c['top1_match'] for c in all_same)}/{len(all_same)} ({100*sum(c['top1_match'] for c in all_same)/len(all_same):.1f}%)")
         
-        print(f"\nModel outputs (DIFFERENT preprocessing):")
+        print(f"\nModel outputs (DIFFERENT preprocessing - TF vs PyTorch):")
         print(f"  Correlation: avg={np.mean([c['correlation'] for c in all_diff]):.6f}")
         print(f"  Top-1 match: {sum(c['top1_match'] for c in all_diff)}/{len(all_diff)} ({100*sum(c['top1_match'] for c in all_diff)/len(all_diff):.1f}%)")
     
@@ -1195,21 +1412,29 @@ def main():
     print("DIAGNOSIS")
     print("=" * 70)
     
+    if args.use_prod_backend_model:
+        print("\n📌 PROD BACKEND mode: PyTorch = web app model; TF = original (zeroZ) for comparison.")
+        print("   Probabilities like 0.55 vs 0.9999 for SN2002er show the prod backend model differs from the original TF model.")
+    
+    preproc_corr = np.mean([c['correlation'] for c in all_preproc]) if all_preproc else 0.0
     if all_same:
         same_corr = np.mean([c['correlation'] for c in all_same])
         same_match = sum(c['top1_match'] for c in all_same) / len(all_same)
         diff_corr = np.mean([c['correlation'] for c in all_diff])
         diff_match = sum(c['top1_match'] for c in all_diff) / len(all_diff)
-        preproc_corr = np.mean([c['correlation'] for c in all_preproc])
         
         if same_corr > 0.9999 and same_match > 0.95:
-            print("\n✅ PyTorch model weights are correctly converted from TensorFlow.")
+            if not args.use_prod_backend_model:
+                print("\n✅ PyTorch model weights are correctly converted from TensorFlow.")
             if diff_corr < same_corr - 0.001 or diff_match < same_match - 0.05:
-                print("⚠️  Preprocessing differences are causing some output discrepancies.")
-                print("   The prod_backend preprocessing differs from original DASH preprocessing.")
+                if args.use_prod_backend_model:
+                    print("   TF (original) vs PyTorch (prod) differ because they are different models.")
+                else:
+                    print("⚠️  Preprocessing differences are causing some output discrepancies.")
+                    print("   The prod_backend preprocessing differs from original DASH preprocessing.")
             else:
                 print("✅ Preprocessing pipelines produce nearly identical results.")
-        elif same_corr < 0.999:
+        elif same_corr < 0.999 and not args.use_prod_backend_model:
             print("\n❌ PyTorch model outputs differ significantly from TensorFlow even with same preprocessing.")
             print("   This indicates a problem with the weight conversion or model architecture.")
         

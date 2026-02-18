@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.signal import medfilt
-from scipy.interpolate import splrep, splev
+from scipy.interpolate import splrep, splev, UnivariateSpline
 from typing import Tuple, Optional, Union
 from app.config.logging import get_logger
 from app.shared.utils.validators import validate_spectrum, ValidationError
@@ -75,29 +75,68 @@ class DashSpectrumProcessor:
         try:
             validate_spectrum(wave.tolist(), flux.tolist(), z)
 
-            # Process spectrum
-            flux_processed = self.normalise_spectrum(flux)
-            flux_processed = self.limit_wavelength_range(wave, flux_processed, min_wave, max_wave)
+            # 1) Initial normalisation and wavelength limiting
+            flux_norm = self.normalise_spectrum(flux)
 
-            # Apply smoothing if requested
-            if smooth > 0:
-                flux_processed = self._apply_smoothing(wave, flux_processed, smooth)
+            effective_min = self.w0 if min_wave is None else min_wave
+            effective_max = self.w1 if max_wave is None else max_wave
+            flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
 
-            # Derive redshift and validate range
+            # 2) Smoothing with median filter (match original DASH kernel logic)
+            effective_smooth = smooth if smooth > 0 else 6
+            w_density = (self.w1 - self.w0) / self.nw
+            wavelength_density = (np.max(wave) - np.min(wave)) / max(len(wave), 1)
+            if wavelength_density <= 0:
+                filter_size = 1
+            else:
+                filter_size = int(w_density / wavelength_density * effective_smooth / 2) * 2 + 1
+            if filter_size < self.MIN_FILTER_SIZE:
+                filter_size = self.MIN_FILTER_SIZE
+            if filter_size % 2 == 0:
+                filter_size += 1
+            flux_smoothed = medfilt(flux_limited, kernel_size=filter_size)
+
+            # 3) Derive redshifted spectrum, restrict to model range, re-normalise
             wave_deredshifted = wave / (1 + z)
             if len(wave_deredshifted) < 2:
                 raise ValidationError("Spectrum is out of classification range after deredshifting")
 
-            # Apply processing pipeline
-            binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(wave_deredshifted, flux_processed)
-            new_flux, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
-            mean_zero_flux = self.mean_zero(new_flux, min_idx, max_idx)
+            mask = (wave_deredshifted >= self.w0) & (wave_deredshifted < self.w1)
+            wave_dereds = wave_deredshifted[mask]
+            flux_dereds = flux_smoothed[mask]
+            if wave_dereds.size == 0:
+                raise ValidationError(
+                    f"Spectrum out of wavelength range [{self.w0}, {self.w1}] after deredshifting"
+                )
+            flux_dereds = self.normalise_spectrum(flux_dereds)
+
+            # 4) Log-wavelength binning
+            binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(
+                wave_dereds, flux_dereds
+            )
+
+            # Guard against completely empty or pathological spectra
+            if min_idx == max_idx == 0 and not np.any(binned_flux):
+                flat = np.full(self.nw, self.DEFAULT_OUTER_VAL, dtype=float)
+                return flat, 0, 0, z
+
+            # 5) Continuum removal (match DASH semantics)
+            cont_removed, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
+
+            # 6) Mean zero within valid region
+            mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
+
+            # 7) Apodize (cosine bell) without outer offset
             apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
-            flux_norm = self.normalise_spectrum(apodized_flux)
-            flux_norm = self.zero_non_overlap_part(flux_norm, min_idx, max_idx, self.DEFAULT_OUTER_VAL)
+
+            # 8) Final normalisation and zero_non_overlap_part with outerVal=0.5
+            flux_norm_final = self.normalise_spectrum(apodized_flux)
+            flux_norm_final = self.zero_non_overlap_part(
+                flux_norm_final, min_idx, max_idx, self.DEFAULT_OUTER_VAL
+            )
 
             logger.debug(f"Processing completed: min_idx={min_idx}, max_idx={max_idx}")
-            return flux_norm, min_idx, max_idx, z
+            return flux_norm_final, min_idx, max_idx, z
 
         except ValidationError:
             # Re-raise ValidationError as-is
@@ -233,26 +272,41 @@ class DashSpectrumProcessor:
         """
         try:
             # Validate indices
-            min_idx = np.clip(min_idx, 0, len(flux) - 1)
-            max_idx = np.clip(max_idx, min_idx, len(flux) - 1)
+            min_idx = int(np.clip(min_idx, 0, len(flux) - 1))
+            max_idx = int(np.clip(max_idx, min_idx, len(flux) - 1))
 
             wave_region = wave[min_idx:max_idx + 1]
             flux_region = flux[min_idx:max_idx + 1]
 
-            if len(wave_region) > self.num_spline_points:
-                # Use spline fitting
-                indices = np.linspace(0, len(wave_region) - 1, self.num_spline_points, dtype=int)
-                spline = splrep(wave_region[indices], flux_region[indices], k=3)
-                continuum = splev(wave_region, spline)
+            # Match DASH semantics: shift flux by +1, divide by spline continuum, then normalise (flux-1)
+            flux_plus = flux + 1.0
+            cont_removed = np.copy(flux_plus)
+
+            continuum = np.zeros_like(flux_plus)
+            if len(wave_region) > self.num_spline_points and (max_idx - min_idx) > 5:
+                spline = UnivariateSpline(
+                    wave[min_idx:max_idx + 1], flux_plus[min_idx:max_idx + 1], k=3
+                )
+                spline_wave = np.linspace(wave[min_idx], wave[max_idx],
+                                          num=self.num_spline_points, endpoint=True)
+                spline_points = spline(spline_wave)
+                spline_more = UnivariateSpline(spline_wave, spline_points, k=3)
+                spline_points_more = spline_more(wave[min_idx:max_idx + 1])
+                continuum[min_idx:max_idx + 1] = spline_points_more
             else:
-                # Use mean for short regions
-                continuum = np.full_like(flux_region, np.mean(flux_region))
+                continuum[min_idx:max_idx + 1] = 1.0
 
-            # Create full continuum array
-            full_continuum = np.zeros_like(flux)
-            full_continuum[min_idx:max_idx + 1] = continuum
+            valid = continuum[min_idx:max_idx + 1] != 0
+            if np.any(valid):
+                cont_removed[min_idx:max_idx + 1][valid] = (
+                    flux_plus[min_idx:max_idx + 1][valid] / continuum[min_idx:max_idx + 1][valid]
+                )
 
-            return flux - full_continuum, full_continuum
+            cont_removed_norm = DashSpectrumProcessor.normalise_spectrum(cont_removed - 1.0)
+            cont_removed_norm[:min_idx] = 0.0
+            cont_removed_norm[max_idx + 1:] = 0.0
+
+            return cont_removed_norm, continuum - 1.0
 
         except Exception as e:
             logger.error(f"Continuum removal failed: {str(e)}")
@@ -261,69 +315,55 @@ class DashSpectrumProcessor:
     @staticmethod
     def mean_zero(flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
         """
-        Zero-mean the flux array within the specified region.
-
-        Args:
-            flux: Input flux array
-            min_idx: Start index of valid region
-            max_idx: End index of valid region
-
-        Returns:
-            Zero-meaned flux array
+        Zero-mean the flux array within the specified region, matching
+        original DASH behaviour:
+        - subtract mean within [min_idx, max_idx)
+        - keep outer regions equal to the original flux.
         """
-        flux_out = np.copy(flux)
+        if flux.size == 0:
+            return flux
 
-        # Validate indices
-        min_idx = np.clip(min_idx, 0, len(flux_out) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(flux_out) - 1)
+        min_idx = int(np.clip(min_idx, 0, len(flux) - 1))
+        max_idx = int(np.clip(max_idx, min_idx, len(flux) - 1))
 
-        # Set regions outside valid range to edge values
-        flux_out[:min_idx] = flux_out[min_idx]
-        flux_out[max_idx:] = flux_out[max_idx]
+        if max_idx <= min_idx:
+            return flux
 
-        # Subtract mean from valid region
-        valid_mean = np.mean(flux_out[min_idx:max_idx + 1])
-        flux_out = flux_out - valid_mean
-
-        return flux_out
+        out = np.copy(flux)
+        mean_flux = np.mean(out[min_idx:max_idx])
+        out[min_idx:max_idx] = out[min_idx:max_idx] - mean_flux
+        # outer regions unchanged
+        return out
 
     @staticmethod
     def apodize(flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
         """
-        Apply apodization to reduce edge effects.
-
-        Args:
-            flux: Input flux array
-            min_idx: Start index of valid region
-            max_idx: End index of valid region
-
-        Returns:
-            Apodized flux array
+        Apply apodization to reduce edge effects using a 5% cosine bell,
+        consistent with the original DASH implementation.
         """
-        apodized = np.copy(flux)
+        if flux.size == 0:
+            return flux
 
-        # Validate indices
-        min_idx = np.clip(min_idx, 0, len(apodized) - 1)
-        max_idx = np.clip(max_idx, min_idx, len(apodized) - 1)
+        out = np.copy(flux)
+        nw = len(out)
+        min_idx = int(np.clip(min_idx, 0, nw - 1))
+        max_idx = int(np.clip(max_idx, min_idx, nw - 1))
 
-        # Calculate edge width
-        edge_width = min(DashSpectrumProcessor.DEFAULT_EDGE_WIDTH, (max_idx - min_idx) // DashSpectrumProcessor.DEFAULT_EDGE_RATIO)
+        percent = 0.05
+        nsquash = int(nw * percent)
+        if nsquash <= 1:
+            return out
 
-        if edge_width > 0:
-            for i in range(edge_width):
-                factor = 0.5 * (1 + np.cos(np.pi * i / edge_width))
+        for i in range(nsquash):
+            arg = np.pi * i / (nsquash - 1)
+            factor = 0.5 * (1.0 - np.cos(arg))
+            if (min_idx + i < nw) and (max_idx - i >= 0):
+                out[min_idx + i] = factor * out[min_idx + i]
+                out[max_idx - i] = factor * out[max_idx - i]
+            else:
+                break
 
-                # Apply to left edge
-                left_idx = min_idx + i
-                if 0 <= left_idx < len(apodized):
-                    apodized[left_idx] *= factor
-
-                # Apply to right edge
-                right_idx = max_idx - i
-                if 0 <= right_idx < len(apodized):
-                    apodized[right_idx] *= factor
-
-        return apodized
+        return out
 
     @staticmethod
     def zero_non_overlap_part(
@@ -334,15 +374,9 @@ class DashSpectrumProcessor:
     ) -> np.ndarray:
         """
         Set regions outside the valid range to a specified value.
-
-        Args:
-            array: Input array
-            min_index: Start index of valid region
-            max_index: End index of valid region
-            outer_val: Value to set outside valid region
-
-        Returns:
-            Modified array
+        Matches DASH behaviour: indices < min_index and > max_index
+        are set to outer_val; the valid region [min_index, max_index]
+        is preserved.
         """
         sliced_array = np.copy(array)
 
@@ -352,7 +386,7 @@ class DashSpectrumProcessor:
 
         # Set outer regions
         sliced_array[:min_index] = outer_val
-        sliced_array[max_index:] = outer_val
+        sliced_array[max_index + 1:] = outer_val
 
         return sliced_array
 
