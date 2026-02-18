@@ -6,7 +6,7 @@ tf.disable_v2_behavior()
 
 def inspect_tf_graph_structure():
     """Inspect the actual TensorFlow graph structure to understand the architecture."""
-    tf_model_path = "backend/dev_tests/../astrodash_models/zeroZ/tensorflow_model.ckpt"
+    tf_model_path = "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/original_dash_models/zeroZ/tensorflow_model.ckpt"
 
     # Load the meta graph
     saver = tf.train.import_meta_graph(tf_model_path + '.meta')

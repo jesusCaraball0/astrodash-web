@@ -5,7 +5,7 @@ tf.disable_v2_behavior()
 
 # Absolute paths
 PROJECT_ROOT = "/home/jesusca/code_personal/astrodash-web"
-TF_MODEL = f"{PROJECT_ROOT}/backend/astrodash_models/zeroZ/tensorflow_model.ckpt"
+TF_MODEL = f"/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/original_dash_models/zeroZ/tensorflow_model.ckpt"
 
 def inspect_tf_graph():
     """Inspect the TensorFlow model graph to find tensor names"""
