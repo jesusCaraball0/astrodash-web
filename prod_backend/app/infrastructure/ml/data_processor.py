@@ -75,9 +75,21 @@ class DashSpectrumProcessor:
         try:
             validate_spectrum(wave.tolist(), flux.tolist(), z)
 
-            # 1) Initial normalisation and wavelength limiting
-            flux_norm = self.normalise_spectrum(flux)
+            # Ensure ascending wavelength so index-based limit_wavelength_range keeps
+            # the correct interval [min_idx, max_idx-1] (when descending, that slice is empty).
+            wave = np.asarray(wave, dtype=float).copy()
+            flux = np.asarray(flux, dtype=float).copy()
+            if wave.size > 1 and wave[0] > wave[-1]:
+                perm = np.argsort(wave)
+                wave = wave[perm]
+                flux = flux[perm]
 
+            # 1) Initial normalisation and wavelength limiting
+            # Use rest-frame bounds [w0, w1] on observed wave to match the original
+            # DASH training pipeline (and TF inference). The model was trained on
+            # this convention; using observed-frame bounds here would change the
+            # input distribution and hurt performance (e.g. Ic bias).
+            flux_norm = self.normalise_spectrum(flux)
             effective_min = self.w0 if min_wave is None else min_wave
             effective_max = self.w1 if max_wave is None else max_wave
             flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
@@ -90,10 +102,14 @@ class DashSpectrumProcessor:
                 filter_size = 1
             else:
                 filter_size = int(w_density / wavelength_density * effective_smooth / 2) * 2 + 1
-            if filter_size < self.MIN_FILTER_SIZE:
-                filter_size = self.MIN_FILTER_SIZE
+            if filter_size < 1:
+                filter_size = 1
             if filter_size % 2 == 0:
                 filter_size += 1
+            # Cap to array length to avoid "kernel_size exceeds volume extent" and very slow medfilt
+            n_flux = len(flux_limited)
+            if filter_size > n_flux:
+                filter_size = n_flux if n_flux % 2 == 1 else max(1, n_flux - 1)
             flux_smoothed = medfilt(flux_limited, kernel_size=filter_size)
 
             # 3) Derive redshifted spectrum, restrict to model range, re-normalise
@@ -145,6 +161,100 @@ class DashSpectrumProcessor:
             logger.error(f"Spectrum processing failed: {str(e)}")
             raise ValidationError(f"Spectrum processing failed: {str(e)}") from e
 
+    def process_with_steps(
+        self,
+        wave: np.ndarray,
+        flux: np.ndarray,
+        z: float,
+        smooth: int = 0,
+        min_wave: Optional[float] = None,
+        max_wave: Optional[float] = None,
+    ) -> Tuple[dict, np.ndarray, int, int, float]:
+        """
+        Same as process() but also return a dict of intermediate arrays for debugging.
+        Keys: step1_flux_limited, step2_filter_size, step2_flux_smoothed, step3_flux_dereds,
+              step4_binned_flux, step5_cont_removed, step6_mean_zero, step7_apodized, step8_final.
+        """
+        steps: dict = {}
+        try:
+            validate_spectrum(wave.tolist(), flux.tolist(), z)
+
+            wave = np.asarray(wave, dtype=float).copy()
+            flux = np.asarray(flux, dtype=float).copy()
+            if wave.size > 1 and wave[0] > wave[-1]:
+                perm = np.argsort(wave)
+                wave = wave[perm]
+                flux = flux[perm]
+
+            flux_norm = self.normalise_spectrum(flux)
+            effective_min = self.w0 if min_wave is None else min_wave
+            effective_max = self.w1 if max_wave is None else max_wave
+            flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
+            steps["step1_flux_limited"] = np.copy(flux_limited)
+
+            effective_smooth = smooth if smooth > 0 else 6
+            w_density = (self.w1 - self.w0) / self.nw
+            wavelength_density = (np.max(wave) - np.min(wave)) / max(len(wave), 1)
+            if wavelength_density <= 0:
+                filter_size = 1
+            else:
+                filter_size = int(w_density / wavelength_density * effective_smooth / 2) * 2 + 1
+            if filter_size < 1:
+                filter_size = 1
+            if filter_size % 2 == 0:
+                filter_size += 1
+            n_flux = len(flux_limited)
+            if filter_size > n_flux:
+                filter_size = n_flux if n_flux % 2 == 1 else max(1, n_flux - 1)
+            steps["step2_filter_size"] = filter_size
+            flux_smoothed = medfilt(flux_limited, kernel_size=filter_size)
+            steps["step2_flux_smoothed"] = np.copy(flux_smoothed)
+
+            wave_deredshifted = wave / (1 + z)
+            if len(wave_deredshifted) < 2:
+                raise ValidationError("Spectrum is out of classification range after deredshifting")
+            mask = (wave_deredshifted >= self.w0) & (wave_deredshifted < self.w1)
+            wave_dereds = wave_deredshifted[mask]
+            flux_dereds = flux_smoothed[mask]
+            if wave_dereds.size == 0:
+                raise ValidationError(
+                    f"Spectrum out of wavelength range [{self.w0}, {self.w1}] after deredshifting"
+                )
+            flux_dereds = self.normalise_spectrum(flux_dereds)
+            steps["step3_flux_dereds"] = np.copy(flux_dereds)
+            steps["step3_wave_dereds"] = np.copy(wave_dereds)
+
+            binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(
+                wave_dereds, flux_dereds
+            )
+            steps["step4_binned_flux"] = np.copy(binned_flux)
+
+            if min_idx == max_idx == 0 and not np.any(binned_flux):
+                flat = np.full(self.nw, self.DEFAULT_OUTER_VAL, dtype=float)
+                steps["step5_cont_removed"] = flat
+                steps["step6_mean_zero"] = flat
+                steps["step7_apodized"] = flat
+                steps["step8_final"] = flat
+                return steps, flat, 0, 0, z
+
+            cont_removed, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
+            steps["step5_cont_removed"] = np.copy(cont_removed)
+            mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
+            steps["step6_mean_zero"] = np.copy(mean_zero_flux)
+            apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
+            steps["step7_apodized"] = np.copy(apodized_flux)
+            flux_norm_final = self.normalise_spectrum(apodized_flux)
+            flux_norm_final = self.zero_non_overlap_part(
+                flux_norm_final, min_idx, max_idx, self.DEFAULT_OUTER_VAL
+            )
+            steps["step8_final"] = np.copy(flux_norm_final)
+            return steps, flux_norm_final, min_idx, max_idx, z
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"Spectrum processing failed: {str(e)}")
+            raise ValidationError(f"Spectrum processing failed: {str(e)}") from e
+
     def _apply_smoothing(self, wave: np.ndarray, flux: np.ndarray, smooth: int) -> np.ndarray:
         """Apply median filtering for smoothing."""
         try:
@@ -185,7 +295,9 @@ class DashSpectrumProcessor:
         if not np.isfinite(flux_min) or not np.isfinite(flux_max):
             raise ValidationError("Array contains non-finite values")
 
-        if np.isclose(flux_min, flux_max):
+        # Match TF: treat as constant only on exact equality (TF uses np.min(flux) == np.max(flux)).
+        # Using np.isclose here zeroed spectra with tiny ptp and caused Backend (0,0) vs TF valid range.
+        if flux_min == flux_max:
             logger.warning("Normalizing spectrum: constant flux array")
             return np.zeros(len(flux))
 
@@ -216,12 +328,13 @@ class DashSpectrumProcessor:
         """
         flux_out = np.copy(flux)
 
+        # Match TF exactly: index-based zeroing (argmin only, no clip)
         if min_wave is not None and np.isfinite(min_wave):
-            min_idx = np.clip((np.abs(wave - min_wave)).argmin(), 0, len(flux_out) - 1)
+            min_idx = int((np.abs(np.asarray(wave) - min_wave)).argmin())
             flux_out[:min_idx] = 0
 
         if max_wave is not None and np.isfinite(max_wave):
-            max_idx = np.clip((np.abs(wave - max_wave)).argmin(), 0, len(flux_out) - 1)
+            max_idx = int((np.abs(np.asarray(wave) - max_wave)).argmin())
             flux_out[max_idx:] = 0
 
         return flux_out
@@ -283,7 +396,7 @@ class DashSpectrumProcessor:
             cont_removed = np.copy(flux_plus)
 
             continuum = np.zeros_like(flux_plus)
-            if len(wave_region) > self.num_spline_points and (max_idx - min_idx) > 5:
+            if (max_idx - min_idx) > 5:
                 spline = UnivariateSpline(
                     wave[min_idx:max_idx + 1], flux_plus[min_idx:max_idx + 1], k=3
                 )
@@ -315,10 +428,8 @@ class DashSpectrumProcessor:
     @staticmethod
     def mean_zero(flux: np.ndarray, min_idx: int, max_idx: int) -> np.ndarray:
         """
-        Zero-mean the flux array within the specified region, matching
-        original DASH behaviour:
-        - subtract mean within [min_idx, max_idx)
-        - keep outer regions equal to the original flux.
+        Zero-mean the flux array within [min_idx, max_idx] inclusive, matching
+        TF/original DASH: mean over [min_idx, max_idx), subtract from [min_idx, max_idx].
         """
         if flux.size == 0:
             return flux
@@ -331,8 +442,7 @@ class DashSpectrumProcessor:
 
         out = np.copy(flux)
         mean_flux = np.mean(out[min_idx:max_idx])
-        out[min_idx:max_idx] = out[min_idx:max_idx] - mean_flux
-        # outer regions unchanged
+        out[min_idx : max_idx + 1] = out[min_idx : max_idx + 1] - mean_flux
         return out
 
     @staticmethod
