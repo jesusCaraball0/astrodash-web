@@ -18,33 +18,33 @@ import matplotlib.pyplot as plt
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 
-# 6-class canonical set: Ia, Ib, Ic, IIb, IIn, II (+ Other for unmapped)
-_CANONICAL_ORDER = ("Ia", "Ib", "Ic", "IIb", "IIn", "II", "Other")
+# 4-class canonical set: Ia, Ib/Ic, IIn, II (+ Other for unmapped); Ib+Ic and IIb+II combined
+_CANONICAL_ORDER = ("Ia", "Ib/Ic", "IIn", "II", "Other")
 
 # DASH type (prediction) -> canonical
 _DASH_TYPE_TO_CANONICAL: Dict[str, str] = {
     "Ia-norm": "Ia", "Ia-91T": "Ia", "Ia-91bg": "Ia", "Ia-02cx": "Ia", "Ia-pec": "Ia",
     "Ia-csm": "IIn",
-    "Ib-norm": "Ib", "Ib-pec": "Ib",
-    "Ic-norm": "Ic", "Ic-pec": "Ic", "Ic-broad": "Ic",
-    "IIb": "IIb",
+    "Ib-norm": "Ib/Ic", "Ib-pec": "Ib/Ic",
+    "Ic-norm": "Ib/Ic", "Ic-pec": "Ib/Ic", "Ic-broad": "Ib/Ic",
+    "IIb": "II",
     "IIn": "IIn", "Ibn": "IIn",
     "IIP": "II", "IIL": "II", "II-pec": "II",
 }
 
-# Catalog (Obj. Type) -> canonical; SLSN-I mapped to Ic
+# Catalog (Obj. Type) -> canonical; Ib+Ic -> Ib/Ic, IIb+II -> II; SLSN-I -> Ib/Ic
 _CATALOG_TO_CANONICAL: Dict[str, str] = {
     "SN Ia": "Ia", "SNIa": "Ia", "Ia": "Ia",
     "SN Ia-91T-like": "Ia", "SN Ia-91bg-like": "Ia", "SN Ia-pec": "Ia",
     "SN Ia-02cx": "Ia", "SN Ia-Ca-rich": "Ia", "Computed-Ia": "Ia", "SN Ia-SC": "Ia",
     "SN Ia-CSM": "IIn", "SN Ia-csm": "IIn",
-    "SN Ib": "Ib", "SNIb": "Ib", "Ib": "Ib",
-    "SN Ib-pec": "Ib", "SN Ib/c": "Ib", "SN Ib/c ": "Ib", "SN Ibc": "Ib", "Ibc": "Ib",
-    "SN Ib-Ca-rich": "Ib", "SN Ib/c-Ca-rich": "Ib",
-    "SN Ic": "Ic", "SNIc": "Ic", "Ic": "Ic",
-    "SN Ic-BL": "Ic", "SN Ic-pec": "Ic", "SN Ic-Ca-rich": "Ic",
-    "SLSN-I": "Ic", "SLSNe-I": "Ic",
-    "SN IIb": "IIb", "SNIIb": "IIb", "IIb": "IIb", "Computed-IIb": "IIb",
+    "SN Ib": "Ib/Ic", "SNIb": "Ib/Ic", "Ib": "Ib/Ic",
+    "SN Ib-pec": "Ib/Ic", "SN Ib/c": "Ib/Ic", "SN Ib/c ": "Ib/Ic", "SN Ibc": "Ib/Ic", "Ibc": "Ib/Ic",
+    "SN Ib-Ca-rich": "Ib/Ic", "SN Ib/c-Ca-rich": "Ib/Ic",
+    "SN Ic": "Ib/Ic", "SNIc": "Ib/Ic", "Ic": "Ib/Ic",
+    "SN Ic-BL": "Ib/Ic", "SN Ic-pec": "Ib/Ic", "SN Ic-Ca-rich": "Ib/Ic",
+    "SLSN-I": "Ib/Ic", "SLSNe-I": "Ib/Ic",
+    "SN IIb": "II", "SNIIb": "II", "IIb": "II", "Computed-IIb": "II",
     "SN IIn": "IIn", "SNIIn": "IIn", "IIn": "IIn",
     "SN IIn-pec": "IIn", "SN Ibn": "IIn", "Ibn": "IIn", "SN Ibn/Icn": "IIn",
     "SN II": "II", "SNII": "II", "II": "II",
@@ -55,7 +55,7 @@ _CATALOG_TO_CANONICAL: Dict[str, str] = {
 
 
 def _normalize_type(label: str, from_catalog: bool) -> str:
-    """Map label to 6-class canonical: Ia, Ib, Ic, IIb, IIn, II, or Other."""
+    """Map label to 4-class canonical: Ia, Ib/Ic, IIn, II, or Other."""
     if not label or not str(label).strip():
         return "Other"
     raw = str(label).strip()
@@ -146,7 +146,7 @@ def compute_metrics_and_confusion_matrix(
     f1s = [per_class[l]["f1"] for l in labels if per_class[l]["support"] > 0]
     macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
     print("\n" + "=" * 60)
-    print("PERFORMANCE METRICS (6 classes: Ia, Ib, Ic, IIb, IIn, II)")
+    print("PERFORMANCE METRICS (4 classes: Ia, Ib/Ic, IIn, II)")
     print("=" * 60)
     print(f"Samples used: {len(pairs)}  (skipped: {skipped}, excluded (Other): {n_other})")
     print(f"\nAccuracy: {accuracy:.4f}")
