@@ -25,45 +25,49 @@ class FileSpectrumRepository(SpectrumRepository):
         self.config = config or get_settings()
         self.processor = DashSpectrumProcessor(w0=4000, w1=9000, nw=1024)
         self.storage_dir = os.path.join(self.config.storage_dir, "spectra")
-        os.makedirs(self.storage_dir, exist_ok=True)
+        # Spectra are not persisted to disk; leave makedirs commented out to avoid creating the dir.
+        # os.makedirs(self.storage_dir, exist_ok=True)
 
     def save(self, spectrum: Spectrum) -> Spectrum:
         try:
             validate_spectrum(spectrum.x, spectrum.y, spectrum.redshift)
             if not spectrum.id:
                 spectrum.id = str(uuid.uuid4())
-            path = os.path.join(self.storage_dir, f"{spectrum.id}.json")
-            with open(path, "w") as f:
-                json.dump({
-                    "id": spectrum.id,
-                    "osc_ref": spectrum.osc_ref,
-                    "file_name": spectrum.file_name,
-                    "x": spectrum.x,
-                    "y": spectrum.y,
-                    "redshift": spectrum.redshift,
-                    "meta": spectrum.meta
-                }, f)
-            logger.debug(f"Saved spectrum {spectrum.id} to {path}")
+            # Persisting spectra to disk is disabled; return spectrum in-memory only.
+            # path = os.path.join(self.storage_dir, f"{spectrum.id}.json")
+            # with open(path, "w") as f:
+            #     json.dump({
+            #         "id": spectrum.id,
+            #         "osc_ref": spectrum.osc_ref,
+            #         "file_name": spectrum.file_name,
+            #         "x": spectrum.x,
+            #         "y": spectrum.y,
+            #         "redshift": spectrum.redshift,
+            #         "meta": spectrum.meta
+            #     }, f)
+            # logger.debug(f"Saved spectrum {spectrum.id} to {path}")
             return spectrum
         except Exception as e:
             logger.error(f"Error saving spectrum: {e}", exc_info=True)
             raise
 
     def get_by_id(self, spectrum_id: str) -> Optional[Spectrum]:
-        path = os.path.join(self.storage_dir, f"{spectrum_id}.json")
-        if not os.path.exists(path):
-            return None
-        with open(path, "r") as f:
-            data = json.load(f)
-        return Spectrum(
-            id=data["id"],
-            osc_ref=data.get("osc_ref"),
-            file_name=data.get("file_name"),
-            x=data["x"],
-            y=data["y"],
-            redshift=data.get("redshift"),
-            meta=data.get("meta", {})
-        )
+        """Persistence disabled: do not read from file storage."""
+        # path = os.path.join(self.storage_dir, f"{spectrum_id}.json")
+        # if not os.path.exists(path):
+        #     return None
+        # with open(path, "r") as f:
+        #     data = json.load(f)
+        # return Spectrum(
+        #     id=data["id"],
+        #     osc_ref=data.get("osc_ref"),
+        #     file_name=data.get("file_name"),
+        #     x=data["x"],
+        #     y=data["y"],
+        #     redshift=data.get("redshift"),
+        #     meta=data.get("meta", {})
+        # )
+        return None
 
     def get_by_osc_ref(self, osc_ref: str) -> Optional[Spectrum]:
         # Not implemented for file-based repo
@@ -88,10 +92,12 @@ class FileSpectrumRepository(SpectrumRepository):
             # Handle different file types like the old backend
             if filename.lower().endswith('.lnw'):
                 return self._read_lnw_file(file_obj, filename)
-            elif filename.lower().endswith(('.dat', '.txt')):
+            elif filename.lower().endswith(('.dat', '.txt', '.ascii', '.flm')):
                 return self._read_text_file(file_obj, filename)
             elif filename.lower().endswith('.fits'):
                 return self._read_fits_file(file_obj, filename)
+            elif filename.lower().endswith('.csv'):
+                return self._read_csv_file(file_obj, filename)
             else:
                 logger.error(f"Unsupported file format: {filename}")
                 return None
@@ -162,92 +168,135 @@ class FileSpectrumRepository(SpectrumRepository):
             return None
 
     def _read_text_file(self, file_obj, filename: str) -> Optional[Spectrum]:
-        """Read .dat or .txt file like the old backend."""
+        """Read .dat or .txt file: two-column wavelength/flux, filter 4000–9000 Å."""
         try:
-            import pandas as pd
-            import io
-
-            # Read file content
             if hasattr(file_obj, 'read'):
                 file_obj.seek(0)
                 content = file_obj.read()
                 if isinstance(content, bytes):
                     content = content.decode('utf-8')
             else:
-                with open(file_obj, 'r') as f:
+                with open(file_obj, 'r', encoding='utf-8') as f:
                     content = f.read()
 
-            # Try to parse with pandas first
-            try:
-                # Try different separators
-                for sep in ['\t', ',', ' ']:
-                    try:
-                        df = pd.read_csv(io.StringIO(content), sep=sep, header=None, comment='#')
-                        if len(df.columns) >= 2:
-                            break
-                    except:
-                        continue
-                else:
-                    # If pandas fails, try manual parsing
-                    lines = content.splitlines()
-                    data = []
-                    for line in lines:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                try:
-                                    data.append([float(parts[0]), float(parts[1])])
-                                except ValueError:
-                                    continue
-                    df = pd.DataFrame(data, columns=[0, 1])
-
-                if len(df) == 0:
-                    logger.error(f"No valid data found in {filename}")
-                    return None
-
-                # Extract wavelength and flux
-                wavelength = df[0].tolist()
-                flux = df[1].tolist()
-
-                # Apply wavelength filter like the old backend
-                filtered_data = [(w, f) for w, f in zip(wavelength, flux) if 4000 <= w <= 9000]
-
-                if not filtered_data:
-                    logger.error(f"No data in wavelength range 4000-9000 in {filename}")
-                    return None
-
-                wavelength = [x[0] for x in filtered_data]
-                flux = [x[1] for x in filtered_data]
-
-                # Create spectrum object
-                spectrum_obj = Spectrum(x=list(wavelength), y=list(flux), file_name=filename)
-
-                # Validate before saving
+            lines = content.splitlines()
+            spectrum_data = []
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
                 try:
-                    validate_spectrum(spectrum_obj.x, spectrum_obj.y, spectrum_obj.redshift)
-                except Exception as e:
-                    logger.error(f"Spectrum validation failed for text file: {e}")
-                    return None
+                    wavelength = float(parts[0])
+                    flux = float(parts[1])
+                except ValueError:
+                    continue
+                if 4000.0 <= wavelength <= 9000.0:
+                    spectrum_data.append((wavelength, flux))
 
-                saved_spectrum = self.save(spectrum_obj)
-                return saved_spectrum
-
-            except Exception as e:
-                logger.error(f"Error parsing text file {filename}: {e}")
+            if not spectrum_data:
+                logger.error(f"No valid spectrum data in {filename} (after 4000-9000 Å filter)")
                 return None
+
+            spectrum_data.sort(key=lambda x: x[0])
+            wavelength = [w for w, _ in spectrum_data]
+            flux = [f for _, f in spectrum_data]
+            spectrum_obj = Spectrum(x=wavelength, y=flux, file_name=filename)
+
+            try:
+                validate_spectrum(spectrum_obj.x, spectrum_obj.y, spectrum_obj.redshift)
+            except Exception as e:
+                logger.error(f"Spectrum validation failed for text file: {e}")
+                return None
+
+            return self.save(spectrum_obj)
 
         except Exception as e:
             logger.error(f"Error reading text file {filename}: {e}", exc_info=True)
             return None
 
+    def _read_csv_file(self, file_obj, filename: str) -> Optional[Spectrum]:
+        """Read .csv with header row; use WAVE and FLUX columns (or first two columns)."""
+        try:
+            import csv
+            import io
+
+            if hasattr(file_obj, 'read'):
+                file_obj.seek(0)
+                content = file_obj.read()
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8')
+            else:
+                with open(file_obj, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+            # Try comma then tab
+            for delimiter in (',', '\t'):
+                reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+                rows = list(reader)
+                if not rows:
+                    continue
+                header = [c.strip().upper() for c in rows[0]]
+                data_rows = rows[1:]
+
+                # Find WAVE and FLUX column indices (common header names)
+                wave_idx = None
+                flux_idx = None
+                for i, col in enumerate(header):
+                    if col in ('WAVE', 'WAVELENGTH', 'LAMBDA', 'WL'):
+                        wave_idx = i
+                    if col in ('FLUX', 'FLUX_DENSITY', 'F'):
+                        flux_idx = i
+                if wave_idx is None or flux_idx is None:
+                    # Fallback: first two columns
+                    if len(header) >= 2:
+                        wave_idx, flux_idx = 0, 1
+                    else:
+                        continue
+
+                spectrum_data = []
+                for row in data_rows:
+                    if len(row) <= max(wave_idx, flux_idx):
+                        continue
+                    try:
+                        w = float(row[wave_idx].strip())
+                        f = float(row[flux_idx].strip())
+                        if 4000.0 <= w <= 9000.0:
+                            spectrum_data.append((w, f))
+                    except (ValueError, IndexError):
+                        continue
+
+                if not spectrum_data:
+                    continue
+
+                spectrum_data.sort(key=lambda x: x[0])
+                wavelength = [x[0] for x in spectrum_data]
+                flux = [x[1] for x in spectrum_data]
+                spectrum_obj = Spectrum(x=wavelength, y=flux, file_name=filename)
+
+                try:
+                    validate_spectrum(spectrum_obj.x, spectrum_obj.y, spectrum_obj.redshift)
+                except Exception as e:
+                    logger.error(f"Spectrum validation failed for CSV file: {e}")
+                    return None
+
+                return self.save(spectrum_obj)
+
+            logger.error(f"No valid spectrum data in CSV file {filename}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error reading CSV file {filename}: {e}", exc_info=True)
+            return None
+
     def _read_fits_file(self, file_obj, filename: str) -> Optional[Spectrum]:
-        """Read .fits file like the old backend."""
+        """Read .fits file: table extensions or primary HDU as 1D spectrum with WCS."""
         try:
             from astropy.io import fits
             import numpy as np
 
-            # Read FITS file
             if hasattr(file_obj, 'read'):
                 file_obj.seek(0)
                 hdul = fits.open(file_obj)
@@ -255,42 +304,63 @@ class FileSpectrumRepository(SpectrumRepository):
                 hdul = fits.open(file_obj)
 
             try:
-                # Try to find spectrum data in FITS
                 spectrum_data = None
+                wavelength = None
+                flux = None
 
                 # Look for common spectrum extensions
                 for ext in ['SPECTRUM', 'SPECTRA', 'FLUX', 'DATA']:
                     if ext in hdul:
                         spectrum_data = hdul[ext].data
                         break
-
-                # If not found, try first extension
                 if spectrum_data is None and len(hdul) > 1:
                     spectrum_data = hdul[1].data
 
-                if spectrum_data is None:
-                    logger.error(f"No spectrum data found in FITS file {filename}")
-                    return None
+                # Table-like extension: wavelength + flux columns/attributes
+                if spectrum_data is not None:
+                    if hasattr(spectrum_data, 'wavelength') and hasattr(spectrum_data, 'flux'):
+                        wavelength = np.asarray(spectrum_data.wavelength, dtype=float)
+                        flux = np.asarray(spectrum_data.flux, dtype=float)
+                    elif hasattr(spectrum_data, 'wave') and hasattr(spectrum_data, 'flux'):
+                        wavelength = np.asarray(spectrum_data.wave, dtype=float)
+                        flux = np.asarray(spectrum_data.flux, dtype=float)
+                    elif getattr(spectrum_data.dtype, 'names', None) and len(spectrum_data.dtype.names) >= 2:
+                        wavelength = np.asarray(spectrum_data[spectrum_data.dtype.names[0]], dtype=float)
+                        flux = np.asarray(spectrum_data[spectrum_data.dtype.names[1]], dtype=float)
+                    else:
+                        spectrum_data = None  # fall through to primary HDU handling
 
-                # Extract wavelength and flux
-                if hasattr(spectrum_data, 'wavelength') and hasattr(spectrum_data, 'flux'):
-                    wavelength = spectrum_data.wavelength
-                    flux = spectrum_data.flux
-                elif hasattr(spectrum_data, 'wave') and hasattr(spectrum_data, 'flux'):
-                    wavelength = spectrum_data.wave
-                    flux = spectrum_data.flux
-                elif len(spectrum_data.dtype.names) >= 2:
-                    # Assume first two columns are wavelength and flux
-                    wavelength = spectrum_data[spectrum_data.dtype.names[0]]
-                    flux = spectrum_data[spectrum_data.dtype.names[1]]
-                else:
-                    logger.error(f"Cannot determine wavelength/flux columns in FITS file {filename}")
+                # Primary HDU as 1D image with WCS (e.g. IRAF-style spectrum)
+                if spectrum_data is None and wavelength is None and len(hdul) > 0:
+                    primary = hdul[0]
+                    if hasattr(primary, 'data') and primary.data is not None:
+                        data = np.asarray(primary.data, dtype=float).flatten()
+                        if data.ndim == 1 and len(data) > 0:
+                            h = primary.header
+                            crval1 = h.get('CRVAL1')
+                            crpix1 = h.get('CRPIX1', 1)
+                            cdel1 = h.get('CDELT1')
+                            if crval1 is not None and cdel1 is not None:
+                                # FITS pixel indices are 1-based
+                                wavelength = crval1 + (np.arange(len(data), dtype=float) + 1 - crpix1) * cdel1
+                                flux = data
+                            else:
+                                logger.error(f"No spectrum table and no WCS (CRVAL1/CDELT1) in FITS file {filename}")
+                                return None
+                        else:
+                            logger.error(f"No spectrum data found in FITS file {filename}")
+                            return None
+                    else:
+                        logger.error(f"No spectrum data found in FITS file {filename}")
+                        return None
+
+                if wavelength is None or flux is None:
+                    logger.error(f"No spectrum data found in FITS file {filename}")
                     return None
 
                 # Convert to lists and apply wavelength filter
                 wavelength = wavelength.tolist()
                 flux = flux.tolist()
-
                 filtered_data = [(w, f) for w, f in zip(wavelength, flux) if 4000 <= w <= 9000]
 
                 if not filtered_data:
@@ -299,19 +369,15 @@ class FileSpectrumRepository(SpectrumRepository):
 
                 wavelength = [x[0] for x in filtered_data]
                 flux = [x[1] for x in filtered_data]
+                spectrum_obj = Spectrum(x=wavelength, y=flux, file_name=filename)
 
-                # Create spectrum object
-                spectrum_obj = Spectrum(x=list(wavelength), y=list(flux), file_name=filename)
-
-                # Validate before saving
                 try:
                     validate_spectrum(spectrum_obj.x, spectrum_obj.y, spectrum_obj.redshift)
                 except Exception as e:
                     logger.error(f"Spectrum validation failed for FITS file: {e}")
                     return None
 
-                saved_spectrum = self.save(spectrum_obj)
-                return saved_spectrum
+                return self.save(spectrum_obj)
 
             finally:
                 hdul.close()

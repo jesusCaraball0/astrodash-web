@@ -4,6 +4,11 @@ from typing import Optional, List, Dict
 from pathlib import Path
 import os
 
+# Repo root (astrodash-web). Relative paths in settings are resolved against this
+# so that data is always under the project regardless of process cwd.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
 class Settings(BaseSettings):
     # General
     app_name: str = Field("AstroDash API", env="APP_NAME")
@@ -42,7 +47,8 @@ class Settings(BaseSettings):
     db_echo: bool = Field(False, env="DB_ECHO")
 
     # Data Storage (External to application code)
-    # Note: Paths are relative to prod_backend/ where uvicorn runs
+    # Relative paths are resolved against the project root (astrodash-web) so
+    # data is never written to parent directories regardless of process cwd.
     data_dir: str = Field("../data", env="DATA_DIR")
     storage_dir: str = Field("../data", env="STORAGE_DIR")
 
@@ -137,6 +143,34 @@ class Settings(BaseSettings):
         if v not in allowed_values:
             raise ValueError(f"SESSION_COOKIE_SAMESITE must be one of: {allowed_values}")
         return v
+
+    @field_validator(
+        "data_dir",
+        "storage_dir",
+        "user_model_dir",
+        "dash_model_path",
+        "dash_training_params_path",
+        "transformer_model_path",
+        "template_path",
+        "line_list_path",
+        "log_dir",
+        mode="after",
+    )
+    @classmethod
+    def resolve_paths_against_project_root(cls, v: str) -> str:
+        """Resolve relative paths against project root so storage never uses cwd."""
+        if not v or not isinstance(v, str):
+            return v
+        p = Path(v)
+        if p.is_absolute():
+            return v
+        # Paths like "../data" were meant as "project_root/data". Normalize: strip leading ".." segments
+        # so we never resolve outside the project.
+        parts = p.parts
+        while parts and parts[0] in (".", ".."):
+            parts = parts[1:]
+        resolved = (_PROJECT_ROOT / Path(*parts) if parts else _PROJECT_ROOT).resolve()
+        return str(resolved)
 
 
 def get_settings() -> Settings:

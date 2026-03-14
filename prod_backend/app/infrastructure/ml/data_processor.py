@@ -161,6 +161,110 @@ class DashSpectrumProcessor:
             logger.error(f"Spectrum processing failed: {str(e)}")
             raise ValidationError(f"Spectrum processing failed: {str(e)}") from e
 
+    def process_no_redshift(
+        self,
+        wave: np.ndarray,
+        flux: np.ndarray,
+        smooth: int = 0,
+        min_wave: Optional[float] = None,
+        max_wave: Optional[float] = None
+    ) -> Tuple[np.ndarray, int, int]:
+        """
+        Same preprocessing pipeline as process() but without de-redshifting.
+        No z parameter; spectrum is restricted to [w0, w1] in observed frame.
+        All other steps (normalise, wavelength limit, smoothing, binning,
+        continuum removal, mean zero, apodize, final normalise) are identical.
+
+        Args:
+            wave: Wavelength array in Angstroms (observed frame)
+            flux: Flux array (arbitrary units)
+            smooth: Smoothing factor (0 = no smoothing)
+            min_wave: Minimum wavelength cutoff
+            max_wave: Maximum wavelength cutoff
+
+        Returns:
+            Tuple of (processed_flux, min_idx, max_idx)
+        """
+        try:
+            validate_spectrum(wave.tolist(), flux.tolist(), None)
+
+            wave = np.asarray(wave, dtype=float).copy()
+            flux = np.asarray(flux, dtype=float).copy()
+            if wave.size > 1 and wave[0] > wave[-1]:
+                perm = np.argsort(wave)
+                wave = wave[perm]
+                flux = flux[perm]
+
+            # 1) Initial normalisation and wavelength limiting
+            flux_norm = self.normalise_spectrum(flux)
+            effective_min = self.w0 if min_wave is None else min_wave
+            effective_max = self.w1 if max_wave is None else max_wave
+            flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
+
+            # 2) Smoothing with median filter (same as process)
+            effective_smooth = smooth if smooth > 0 else 6
+            w_density = (self.w1 - self.w0) / self.nw
+            wavelength_density = (np.max(wave) - np.min(wave)) / max(len(wave), 1)
+            if wavelength_density <= 0:
+                filter_size = 1
+            else:
+                filter_size = int(w_density / wavelength_density * effective_smooth / 2) * 2 + 1
+            if filter_size < 1:
+                filter_size = 1
+            if filter_size % 2 == 0:
+                filter_size += 1
+            n_flux = len(flux_limited)
+            if filter_size > n_flux:
+                filter_size = n_flux if n_flux % 2 == 1 else max(1, n_flux - 1)
+            flux_smoothed = medfilt(flux_limited, kernel_size=filter_size)
+
+            # 3) Restrict to model range [w0, w1] in observed frame (no deredshifting)
+            mask = (wave >= self.w0) & (wave < self.w1)
+            wave_restricted = wave[mask]
+            flux_restricted = flux_smoothed[mask]
+            if wave_restricted.size < 2:
+                raise ValidationError(
+                    "Spectrum is out of classification range (fewer than 2 points in [w0, w1])"
+                )
+            if flux_restricted.size == 0:
+                raise ValidationError(
+                    f"Spectrum out of wavelength range [{self.w0}, {self.w1}]"
+                )
+            flux_dereds = self.normalise_spectrum(flux_restricted)
+
+            # 4) Log-wavelength binning
+            binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(
+                wave_restricted, flux_dereds
+            )
+
+            if min_idx == max_idx == 0 and not np.any(binned_flux):
+                flat = np.full(self.nw, self.DEFAULT_OUTER_VAL, dtype=float)
+                return flat, 0, 0
+
+            # 5) Continuum removal
+            cont_removed, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
+
+            # 6) Mean zero within valid region
+            mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
+
+            # 7) Apodize (cosine bell)
+            apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
+
+            # 8) Final normalisation and zero_non_overlap_part
+            flux_norm_final = self.normalise_spectrum(apodized_flux)
+            flux_norm_final = self.zero_non_overlap_part(
+                flux_norm_final, min_idx, max_idx, self.DEFAULT_OUTER_VAL
+            )
+
+            logger.debug(f"Processing (no redshift) completed: min_idx={min_idx}, max_idx={max_idx}")
+            return flux_norm_final, min_idx, max_idx
+
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"Spectrum processing failed: {str(e)}")
+            raise ValidationError(f"Spectrum processing failed: {str(e)}") from e
+
     def process_with_steps(
         self,
         wave: np.ndarray,

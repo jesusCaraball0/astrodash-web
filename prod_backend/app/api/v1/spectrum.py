@@ -159,13 +159,13 @@ async def process_spectrum(
             osc_ref=osc_ref
         )
 
-        # Save spectrum to database for persistence
-        try:
-            await spectrum_service.save_spectrum(spectrum)
-            logger.info(f"Spectrum {spectrum.id} saved to database")
-        except Exception as e:
-            logger.warning(f"Failed to save spectrum to database: {e}")
-            # Continue with processing even if save fails
+        # Spectrum persistence disabled: do not save to DB.
+        # try:
+        #     await spectrum_service.save_spectrum(spectrum)
+        #     logger.info(f"Spectrum {spectrum.id} saved to database")
+        # except Exception as e:
+        #     logger.warning(f"Failed to save spectrum to database: {e}")
+        #     # Continue with processing even if save fails
 
         # Process spectrum with parameters
         processed_spectrum = await processing_service.process_spectrum_with_params(
