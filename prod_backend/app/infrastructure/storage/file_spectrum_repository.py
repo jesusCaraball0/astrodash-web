@@ -92,7 +92,7 @@ class FileSpectrumRepository(SpectrumRepository):
             # Handle different file types like the old backend
             if filename.lower().endswith('.lnw'):
                 return self._read_lnw_file(file_obj, filename)
-            elif filename.lower().endswith(('.dat', '.txt', '.ascii', '.flm')):
+            elif filename.lower().endswith(('.dat', '.txt', '.ascii', '.asci', '.flm')):
                 return self._read_text_file(file_obj, filename)
             elif filename.lower().endswith('.fits'):
                 return self._read_fits_file(file_obj, filename)
