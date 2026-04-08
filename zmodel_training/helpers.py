@@ -118,10 +118,6 @@ def load_json(path: Path, default=None):
         return {} if default is None else default
 
 
-def require(path: Path, name: str) -> None:
-    if not path.exists():
-        raise SystemExit(f"{name} not found: {path}")
-
 def set_seed(seed: int) -> None:
     """Set random seeds for reproducibility."""
     random.seed(seed)

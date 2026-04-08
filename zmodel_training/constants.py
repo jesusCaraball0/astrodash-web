@@ -12,8 +12,8 @@ from prod_backend.app.config.settings import get_settings
 from prod_backend.app.infrastructure.ml.data_processor import DashSpectrumProcessor
 from prod_backend.app.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository
 
-RUN_ID = "03_25_26_no_redshift"
-HAS_REDSHIFT = False
+RUN_ID = "04_07_26_redshift"
+HAS_REDSHIFT = True
 
 WISEREP_DIR = PROJECT_ROOT / "data" / "wiserep"
 SPECTRA_DIR = WISEREP_DIR / "wiserep_data_noSEDM"

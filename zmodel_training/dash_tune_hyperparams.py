@@ -174,7 +174,6 @@ def _sqlite_storage_url(study_dir: Path) -> str:
 def main() -> None:
 
     study_dir = STUDY_DIR
-    helpers.require(const.SPLITS_JSON_80_10_10, "Splits file")
     device = helpers.get_device()
     study_dir.mkdir(parents=True, exist_ok=True)
     storage = OPTUNA_STORAGE_URL or _sqlite_storage_url(study_dir)

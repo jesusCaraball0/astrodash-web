@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 """
 Retrain a DASH-style 1D CNN on WISeREP spectra.
+
+Default: ASCII spectra under data/wiserep + wiserep_splits_by_iau_80_10_10.json.
+
+Colleague dataset: python dash_retrain.py --parquet-ruiyao
+(Optional: create_ruiyao_object_train_val_split.py -> wiserep_splits_train_val_test.json, same train/val/test keys as 80/10/10.)
 """
 from __future__ import annotations
 
@@ -389,44 +394,81 @@ def train(
     return best_model_path
 
 
-def main():
-    """Normal (single) training: one train/val split, one model."""
+def main() -> None:
+    """Normal training: one train/val split, one model."""
+
+    parser = argparse.ArgumentParser(description="Retrain DASH 1D CNN on WISeREP spectra.")
+    parser.add_argument(
+        "--parquet-ruiyao",
+        action="store_true",
+        help="Use ruiyao_parquet_dataset (parquet + wiserep_split_ids.json) instead of ASCII + 80/10/10 JSON.",
+    )
+    args = parser.parse_args()
 
     print("Starting training for DASH 1D CNN Model on Wiserep dataset")
 
     device = helpers.get_device()
     print(f"Device: {device}")
 
-    helpers.require(const.SPLITS_JSON_80_10_10, "Splits file")
-    splits = helpers.load_json(const.SPLITS_JSON_80_10_10)
-    print(
-        f"Splits: train={len(splits.get('train', []))}  val={len(splits.get('val', []))}  "
-        f"test={len(splits.get('test', []))}"
-    )
-    print(f"Loading metadata from {const.METADATA_CSV}")
-
-    metadata = helpers.load_metadata(const.METADATA_CSV)
-    print(f"{len(metadata)} filename -> (type, redshift) entries")
-
-    # save class mappings for val
     const.OUT_DIR.mkdir(parents=True, exist_ok=True)
-    class_mapping = {name: idx for name, idx in const.CLASS_TO_IDX.items()}
     with open(const.OUT_DIR / "class_mapping.json", "w") as f:
-        json.dump(class_mapping, f, indent=2)
+        json.dump({n: const.CLASS_TO_IDX[n] for n in const.CLASS_NAMES}, f, indent=2)
 
-    train_filenames = list(splits["train"])
-    val_filenames = list(splits["val"])
+    parquet_training_config_extra: Optional[Dict] = None
+    if args.parquet_ruiyao:
+        import ruiyao_parquet_dataset as rpd
 
-    class_weights = helpers.compute_class_weights_from_filenames(train_filenames, metadata)
-
-    train_loader = helpers.make_loader(
-        train_filenames, metadata, const.HAS_REDSHIFT, device,
-        shuffle=True, batch_size=const.BATCH_SIZE,
-    )
-    val_loader = helpers.make_loader(
-        val_filenames, metadata, const.HAS_REDSHIFT, device,
-        batch_size=const.BATCH_SIZE,
-    )
+        df, metadata, train_ids, val_ids, test_n = rpd.load_df_metadata_train_val_ids(const.SEED)
+        splits_file = str(
+            rpd.RUIYAO_TRAIN_VAL_TEST_JSON
+            if rpd.RUIYAO_TRAIN_VAL_TEST_JSON.exists()
+            else rpd.RUIYAO_SPLIT_JSON
+        )
+        class_weights = helpers.compute_class_weights_from_filenames(train_ids, metadata)
+        train_loader = DataLoader(
+            rpd.ParquetSpectrumDataset(train_ids, df, has_redshift=const.HAS_REDSHIFT),
+            batch_size=const.BATCH_SIZE,
+            shuffle=True,
+            num_workers=0,
+            collate_fn=collate_skip_none,
+            pin_memory=(device.type == "cuda"),
+        )
+        val_loader = DataLoader(
+            rpd.ParquetSpectrumDataset(val_ids, df, has_redshift=const.HAS_REDSHIFT),
+            batch_size=const.BATCH_SIZE,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=collate_skip_none,
+            pin_memory=(device.type == "cuda"),
+        )
+        parquet_training_config_extra = {
+            "data_mode": "ruiyao_parquet",
+            "parquet": str(rpd.RUIYAO_PARQUET),
+            "metadata_cache": str(rpd.RUIYAO_METADATA_CACHE),
+            "val_frac_from_json_train": rpd.RUIYAO_VAL_FRAC,
+            "test_spectrum_ids_count": test_n,
+        }
+    else:
+        splits = helpers.load_json(const.SPLITS_JSON_80_10_10)
+        print(
+            f"Splits: train={len(splits.get('train', []))}  val={len(splits.get('val', []))}  "
+            f"test={len(splits.get('test', []))}"
+        )
+        print(f"Loading metadata from {const.METADATA_CSV}")
+        metadata = helpers.load_metadata(const.METADATA_CSV)
+        print(f"{len(metadata)} filename -> (type, redshift) entries")
+        train_filenames = list(splits["train"])
+        val_filenames = list(splits["val"])
+        splits_file = str(const.SPLITS_JSON_80_10_10)
+        class_weights = helpers.compute_class_weights_from_filenames(train_filenames, metadata)
+        train_loader = helpers.make_loader(
+            train_filenames, metadata, const.HAS_REDSHIFT, device,
+            shuffle=True, batch_size=const.BATCH_SIZE,
+        )
+        val_loader = helpers.make_loader(
+            val_filenames, metadata, const.HAS_REDSHIFT, device,
+            batch_size=const.BATCH_SIZE,
+        )
 
     model = DashCNN1D(input_length=const.TARGET_LENGTH, num_classes=const.NUM_CLASSES).to(device)
     best_path = train(
@@ -436,13 +478,25 @@ def main():
     )
 
     training_config = {
-        "run_id": const.RUN_ID, "has_redshift": const.HAS_REDSHIFT,
-        "target_length": const.TARGET_LENGTH, "wave_min": const.WAVE_MIN, "wave_max": const.WAVE_MAX,
-        "num_classes": const.NUM_CLASSES, "class_names": const.CLASS_NAMES,
-        "epochs": const.EPOCHS, "batch_size": const.BATCH_SIZE, "lr": const.LEARNING_RATE,
-        "patience": const.EARLY_STOP_PATIENCE, "class_weights": class_weights.tolist(),
-        "splits_file": str(const.SPLITS_JSON_80_10_10), "k_fold": 1, "seed": const.SEED,
+        "run_id": const.RUN_ID,
+        "has_redshift": const.HAS_REDSHIFT,
+        "target_length": const.TARGET_LENGTH,
+        "wave_min": const.WAVE_MIN,
+        "wave_max": const.WAVE_MAX,
+        "num_classes": const.NUM_CLASSES,
+        "class_names": const.CLASS_NAMES,
+        "epochs": const.EPOCHS,
+        "batch_size": const.BATCH_SIZE,
+        "lr": const.LEARNING_RATE,
+        "patience": const.EARLY_STOP_PATIENCE,
+        "class_weights": class_weights.tolist(),
+        "splits_file": splits_file,
+        "k_fold": 1,
+        "seed": const.SEED,
     }
+    if parquet_training_config_extra is not None:
+        training_config.update(parquet_training_config_extra)
+
     with open(const.OUT_DIR / "training_config.json", "w") as f:
         json.dump(training_config, f, indent=2)
 

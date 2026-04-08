@@ -107,7 +107,7 @@ def plot_confusion_matrix(
     fig, ax = plt.subplots(figsize=(max(7.0, 1.2 * n), max(6.0, 1.1 * n)))
     ax.imshow(cm_or_mean, cmap="Blues", vmin=0.0, vmax=100.0, aspect="auto")
 
-    ax.set_title(f"Dash CNN (with z) on WISeREP - {set_name}")
+    ax.set_title(set_name)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
     ax.set_xticks(np.arange(n))
@@ -145,20 +145,47 @@ def eval_single_model(run_id: str) -> None:
     training_config_path = out_dir / "training_config.json"
     confusion_dir = out_dir / "confusion_matrices"
 
-    helpers.require(model_path, "Model")
-    helpers.require(class_mapping_path, "Class mapping")
-    helpers.require(const.SPLITS_JSON_80_10_10, "Splits file")
-
     config = helpers.load_json(training_config_path)
+    splits_path = Path(config.get("splits_file", const.SPLITS_JSON_80_10_10))
+    splits = helpers.load_json(splits_path)
+
     has_redshift = config.get("has_redshift", True)
     device = helpers.get_device()
-    metadata = helpers.load_metadata(const.METADATA_CSV)
     class_names = load_class_names(class_mapping_path)
     n_classes = len(class_names)
-    splits = helpers.load_json(const.SPLITS_JSON_80_10_10)
-
     model = load_model(model_path, n_classes, device)
+    batch_size = int(config.get("batch_size", 64))
 
+    parquet_path = config.get("parquet")
+    if parquet_path:
+        import pandas as pd
+
+        import ruiyao_parquet_dataset as rpd
+
+        df = pd.read_parquet(Path(parquet_path))
+        for split_name in ("val", "test"):
+            ids = list(splits.get(split_name, []))
+            if not ids:
+                continue
+            loader = DataLoader(
+                rpd.ParquetSpectrumDataset(ids, df, has_redshift=has_redshift),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=0,
+                collate_fn=dash_retrain.collate_skip_none,
+                pin_memory=(device.type == "cuda"),
+            )
+            cm = confusion_matrix_counts(model, loader, device, n_classes)
+            plot_confusion_matrix(
+                row_normalized_percent(cm),
+                class_names,
+                split_name,
+                confusion_dir / f"confusion_{split_name}_{run_id}.png",
+                [sum(row) for row in cm],
+            )
+        return
+
+    metadata = helpers.load_metadata(const.METADATA_CSV)
     for split_name in ("val", "test"):
         filenames = list(splits.get(split_name, []))
         if not filenames:
@@ -179,9 +206,6 @@ def eval_kfold_models(run_id: str) -> None:
     class_mapping_path = out_dir / "class_mapping.json"
     training_config_path = out_dir / "training_config.json"
     confusion_dir = out_dir / "confusion_matrices"
-
-    helpers.require(class_mapping_path, "Class mapping")
-    helpers.require(const.SPLITS_JSON_90_10, "Splits file")
 
     config = helpers.load_json(training_config_path)
     has_redshift = config.get("has_redshift", True)
@@ -267,7 +291,6 @@ def main() -> None:
         raise SystemExit("--run-id must be non-empty")
 
     out_dir = MODELS_BASE / run_id
-    helpers.require(out_dir, "Run directory")
 
     if (out_dir / "fold_0" / "model.pth").exists():
         eval_kfold_models(run_id)
