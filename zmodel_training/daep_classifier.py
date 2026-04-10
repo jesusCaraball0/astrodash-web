@@ -1,8 +1,4 @@
 """
-DAEP-style classifier: SpectraTransceiverEncoder (wave, flux) + raw redshift concat + MLP head.
-Training uses Ruiyao parquet + parquet_dataset.load_df_metadata_train_val_ids.
-Outputs go to constants.DAEP_DIR; resume by re-running (loads training_checkpoint.pth if present).
-
 Encoder blocks adapted from
 https://github.com/YunyiShen/Perceiver-diffusion-autoencoder (SpectraLayers, Perceiver, util_layers).
 

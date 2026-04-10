@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -21,9 +22,8 @@ RUIYAO_DIR = const.PROJECT_ROOT / "data" / "wiserep_ruiyao"
 RUIYAO_PARQUET = RUIYAO_DIR / "wiserep_spectra_5class_optical.parquet"
 RUIYAO_SPLIT_JSON = RUIYAO_DIR / "wiserep_split_ids.json"
 RUIYAO_METADATA_CACHE = RUIYAO_DIR / "parquet_spectrum_metadata_cache.json"
-# train/val/test (WISEREP_* ids), same keys as 80/10/10 JSON — written by create_ruiyao_object_train_val_split.py
+# train/val/test (WISEREP_* ids), same keys as 80/10/10 JSON — written by create_trvaltest_from_trtest.py
 RUIYAO_TRAIN_VAL_TEST_JSON = RUIYAO_DIR / "wiserep_splits_train_val_test.json"
-RUIYAO_VAL_FRAC = 0.1
 
 
 def wiserep_spectrum_id_to_iloc(spectrum_id: str) -> int:
@@ -52,49 +52,47 @@ def load_or_build_metadata(df: pd.DataFrame, cache_path: Path) -> Dict[str, Dict
     return meta
 
 
-def stratified_train_val_from_json_train(
-    train_spectrum_ids: List[str],
-    metadata: Dict[str, Dict[str, str]],
-    val_fraction: float,
+def build_object_stratified_train_val(
+    df: pd.DataFrame,
+    colleague_train_ids: List[str],
+    val_object_frac: float,
     seed: int,
-) -> Tuple[List[str], List[str]]:
-    """JSON has train/test only; carve stratified val from train ids."""
-    by_label: Dict[int, List[str]] = {i: [] for i in range(const.NUM_CLASSES)}
-    unlabeled: List[str] = []
-    for sid in train_spectrum_ids:
-        m = metadata.get(sid)
-        if not m:
-            unlabeled.append(sid)
-            continue
-        lab = helpers.normalize_label(m.get("type", ""))
-        if lab is None:
-            unlabeled.append(sid)
-            continue
-        by_label[const.CLASS_TO_IDX[lab]].append(sid)
+) -> Tuple[List[str], List[str], Dict[str, int]]:
+    """Group spectra by IAU (else treat each sid as its own object); stratify holdout by class stratum."""
+    iau_to_sids: Dict[str, List[str]] = defaultdict(list)
+    iau_stratum: Dict[str, int] = {}
+
+    for sid in colleague_train_ids:
+        i = wiserep_spectrum_id_to_iloc(sid)
+        row = df.iloc[i]
+        raw = row["IAU name"]
+        iau = str(raw).strip() if pd.notna(raw) and str(raw).strip() else sid
+        iau_to_sids[iau].append(sid)
+        if iau not in iau_stratum:
+            typ = "" if pd.isna(row["parent_class"]) else str(row["parent_class"]).strip()
+            lab = helpers.normalize_label(typ)
+            iau_stratum[iau] = const.CLASS_TO_IDX[lab] if lab is not None else -1
+
+    by_stratum: Dict[int, List[str]] = defaultdict(list)
+    for iau in iau_to_sids:
+        by_stratum[iau_stratum[iau]].append(iau)
 
     rng = random.Random(seed)
-    train_out: List[str] = []
-    val_out: List[str] = []
-    for _li, ids in by_label.items():
-        if not ids:
-            continue
-        ids = list(ids)
-        rng.shuffle(ids)
-        n_val = int(round(len(ids) * val_fraction))
-        if len(ids) >= 2:
-            n_val = min(max(n_val, 1), len(ids) - 1)
-        else:
-            n_val = 0
-        if n_val == 0:
-            train_out.extend(ids)
-        else:
-            val_out.extend(ids[:n_val])
-            train_out.extend(ids[n_val:])
-    rng.shuffle(unlabeled)
-    n_uv = min(len(unlabeled), int(round(len(unlabeled) * val_fraction)))
-    val_out.extend(unlabeled[:n_uv])
-    train_out.extend(unlabeled[n_uv:])
-    return train_out, val_out
+    train_iau: List[str] = []
+    val_iau: List[str] = []
+    for k in sorted(by_stratum.keys()):
+        objs = by_stratum[k]
+        rng.shuffle(objs)
+        n_val = min(max(1, int(round(len(objs) * val_object_frac))), len(objs) - 1)
+        val_iau.extend(objs[:n_val])
+        train_iau.extend(objs[n_val:])
+
+    train_sids = sorted(s for iau in train_iau for s in iau_to_sids[iau])
+    val_sids = sorted(s for iau in val_iau for s in iau_to_sids[iau])
+    exp = set(colleague_train_ids)
+    if set(train_sids) | set(val_sids) != exp or set(train_sids) & set(val_sids):
+        raise ValueError("Object split failed to partition colleague train_spectrum_ids")
+    return train_sids, val_sids, {"n_train_objects": len(train_iau), "n_val_objects": len(val_iau)}
 
 
 class ParquetSpectrumDataset(Dataset):
@@ -156,24 +154,23 @@ class ParquetSpectrumDataset(Dataset):
 
 def load_df_metadata_train_val_ids(
     seed: int,
-) -> Tuple[pd.DataFrame, Dict[str, Dict[str, str]], List[str], List[str], int]:
-    """Read parquet; train/val from wiserep_splits_train_val_test.json if present, else random spectrum val."""
-    colleague = helpers.load_json(RUIYAO_SPLIT_JSON)
-    train_json = list(colleague.get("train_spectrum_ids", []))
-    test_n = len(colleague.get("test_spectrum_ids", []))
+) -> Tuple[pd.DataFrame, Dict[str, Dict[str, str]], List[str], List[str], List[str]]:
+    """Read parquet; train/val/test from wiserep_splits_train_val_test.json (see create_trvaltest_from_trtest.py)."""
+    if not RUIYAO_TRAIN_VAL_TEST_JSON.is_file():
+        raise SystemExit(
+            f"Missing {RUIYAO_TRAIN_VAL_TEST_JSON}. Run: python zmodel_training/create_trvaltest_from_trtest.py --force"
+        )
+    u = json.loads(RUIYAO_TRAIN_VAL_TEST_JSON.read_text(encoding="utf-8"))
     df = pd.read_parquet(RUIYAO_PARQUET)
     for col in ("wavelength", "flux", "parent_class", "Redshift"):
         if col not in df.columns:
             raise SystemExit(f"Parquet missing column {col!r}")
     helpers.set_seed(seed)
     metadata = load_or_build_metadata(df, RUIYAO_METADATA_CACHE)
-
-    if RUIYAO_TRAIN_VAL_TEST_JSON.exists():
-        u = json.loads(RUIYAO_TRAIN_VAL_TEST_JSON.read_text(encoding="utf-8"))
-        return df, metadata, list(u["train"]), list(u["val"]), len(u.get("test", []))
-
-    train_ids, val_ids = stratified_train_val_from_json_train(
-        train_json, metadata, RUIYAO_VAL_FRAC, seed,
+    return (
+        df,
+        metadata,
+        list(u["train"]),
+        list(u["val"]),
+        list(u.get("test", [])),
     )
-    print(f"Note: write {RUIYAO_TRAIN_VAL_TEST_JSON.name} (create_ruiyao_object_train_val_split.py) for fixed val.")
-    return df, metadata, train_ids, val_ids, test_n

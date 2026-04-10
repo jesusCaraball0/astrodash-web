@@ -43,7 +43,7 @@ def _canonical_class_label(row: pd.Series) -> str:
 
 
 def _iau_object_key(row: pd.Series, sid: str) -> str:
-    """Same object grouping as create_ruiyao_object_train_val_split.build_object_stratified_train_val."""
+    """Same object grouping as parquet_dataset.build_object_stratified_train_val."""
     raw = row["IAU name"]
     if pd.notna(raw) and str(raw).strip():
         return str(raw).strip()

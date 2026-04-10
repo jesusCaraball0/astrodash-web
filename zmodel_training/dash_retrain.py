@@ -5,7 +5,7 @@ Retrain a DASH-style 1D CNN on WISeREP spectra.
 Default: ASCII spectra under data/wiserep + wiserep_splits_by_iau_80_10_10.json.
 
 Colleague dataset: python dash_retrain.py --parquet-ruiyao
-(Optional: create_ruiyao_object_train_val_split.py -> wiserep_splits_train_val_test.json, same train/val/test keys as 80/10/10.)
+(requires wiserep_splits_train_val_test.json from create_trvaltest_from_trtest.py; same train/val/test keys as 80/10/10.)
 """
 from __future__ import annotations
 
@@ -423,12 +423,9 @@ def main() -> None:
     if args.parquet_ruiyao:
         import parquet_dataset as rpd
 
-        df, metadata, train_ids, val_ids, test_n = rpd.load_df_metadata_train_val_ids(const.SEED)
-        splits_file = str(
-            rpd.RUIYAO_TRAIN_VAL_TEST_JSON
-            if rpd.RUIYAO_TRAIN_VAL_TEST_JSON.exists()
-            else rpd.RUIYAO_SPLIT_JSON
-        )
+        df, metadata, train_ids, val_ids, test_ids = rpd.load_df_metadata_train_val_ids(const.SEED)
+        test_n = len(test_ids)
+        splits_file = str(rpd.RUIYAO_TRAIN_VAL_TEST_JSON)
         class_weights = helpers.compute_class_weights_from_filenames(train_ids, metadata)
         train_loader = DataLoader(
             rpd.ParquetSpectrumDataset(train_ids, df, has_redshift=const.HAS_REDSHIFT),
@@ -450,7 +447,6 @@ def main() -> None:
             "data_mode": "ruiyao_parquet",
             "parquet": str(rpd.RUIYAO_PARQUET),
             "metadata_cache": str(rpd.RUIYAO_METADATA_CACHE),
-            "val_frac_from_json_train": rpd.RUIYAO_VAL_FRAC,
             "test_spectrum_ids_count": test_n,
         }
     else:
