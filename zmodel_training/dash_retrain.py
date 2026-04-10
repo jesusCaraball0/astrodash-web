@@ -173,13 +173,18 @@ def evaluate(
             if batch is None:
                 continue
             x, y = batch
-            x, y = x.to(device), y.to(device)
+            if isinstance(x, dict):
+                x = {k: v.to(device) for k, v in x.items()}
+            else:
+                x = x.to(device)
+            y = y.to(device)
+            bs = y.size(0)
             logits = model(x)
             loss = criterion(logits, y)
-            total_loss += loss.item() * x.size(0)
+            total_loss += loss.item() * bs
             preds = logits.argmax(dim=1)
             correct += (preds == y).sum().item()
-            total += x.size(0)
+            total += bs
             for t, p in zip(y.view(-1), preds.view(-1)):
                 t_i = int(t.item())
                 p_i = int(p.item())
@@ -401,7 +406,7 @@ def main() -> None:
     parser.add_argument(
         "--parquet-ruiyao",
         action="store_true",
-        help="Use ruiyao_parquet_dataset (parquet + wiserep_split_ids.json) instead of ASCII + 80/10/10 JSON.",
+        help="Use parquet_dataset (parquet + wiserep_split_ids.json) instead of ASCII + 80/10/10 JSON.",
     )
     args = parser.parse_args()
 
@@ -416,7 +421,7 @@ def main() -> None:
 
     parquet_training_config_extra: Optional[Dict] = None
     if args.parquet_ruiyao:
-        import ruiyao_parquet_dataset as rpd
+        import parquet_dataset as rpd
 
         df, metadata, train_ids, val_ids, test_n = rpd.load_df_metadata_train_val_ids(const.SEED)
         splits_file = str(

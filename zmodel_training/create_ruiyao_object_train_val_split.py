@@ -25,7 +25,7 @@ import pandas as pd
 
 import constants as const
 import helpers as helpers
-import ruiyao_parquet_dataset as rpd
+import parquet_dataset as rpd
 
 
 def build_object_stratified_train_val(

@@ -18,6 +18,7 @@ prod_backend/test.db
 astrodash
 #Ignore testing files
 batch_upload.zip
+zmodel_training/Perceiver-diffusion-autoencoder/
 
 prod_backend/data/*
 data/*

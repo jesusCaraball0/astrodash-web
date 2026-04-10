@@ -160,7 +160,7 @@ def eval_single_model(run_id: str) -> None:
     if parquet_path:
         import pandas as pd
 
-        import ruiyao_parquet_dataset as rpd
+        import parquet_dataset as rpd
 
         df = pd.read_parquet(Path(parquet_path))
         for split_name in ("val", "test"):

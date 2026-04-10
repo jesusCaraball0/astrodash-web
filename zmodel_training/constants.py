@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from typing import Dict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _prod_backend = PROJECT_ROOT / "prod_backend"
@@ -25,7 +24,7 @@ OUT_DIR = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "model
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Training hyperparameters
-EPOCHS = 100
+EPOCHS = 30
 BATCH_SIZE = 64
 LEARNING_RATE = 1e-4
 EARLY_STOP_PATIENCE = 20
@@ -33,47 +32,23 @@ VAL_EVERY = 1
 NUM_WORKERS = 0
 SEED = 10
 
-# 5-class label mapping (from Lanqing)
-LABEL_MAP: Dict[str, str] = {
-    # Type Ia
-    "SN Ia": "SN Ia",
-    "SN Ia-CSM": "SN Ia",
-    "SN Ia-91T-like": "SN Ia",
-    "SN Ia-SC": "SN Ia",
-    "SN Ia-91bg-like": "SN Ia",
-    "SN Ia-pec": "SN Ia",
-    "SN Ia-Ca-rich": "SN Ia",
-    "SN Iax[02cx-like]": "SN Ia",
-    "Computed-Ia": "SN Ia",
-    # Type Ib/c (all Ib and Ic variants)
-    "SN Ib": "SN Ib/c",
-    "SN Ic": "SN Ib/c",
-    "SN Ib/c": "SN Ib/c",
-    "SN Ib-Ca-rich": "SN Ib/c",
-    "SN Ib-pec": "SN Ib/c",
-    "SN Ibn": "SN Ib/c",
-    "SN Ic-BL": "SN Ib/c",
-    "SN Ic-Ca-rich": "SN Ib/c",
-    "SN Ic-pec": "SN Ib/c",
-    "SN Icn": "SN Ib/c",
-    "SN Ib/c-Ca-rich": "SN Ib/c",
-    "SN Ibn/Icn": "SN Ib/c",
-    # Type II (NOT including IIn)
-    "SN II": "SN II",
-    "SN IIP": "SN II",
-    "SN IIL": "SN II",
-    "SN II-pec": "SN II",
-    "SN IIb": "SN II",
-    "Computed-IIP": "SN II",
-    "Computed-IIb": "SN II",
-    # Type IIn (separate)
-    "SN IIn": "SN IIn",
-    "SN IIn-pec": "SN IIn",
-    # SLSN
-    "SLSN-I": "SLSN-I",
-    "SLSN-II": "SLSN-I",
-    "SLSN-R": "SLSN-I",
-}
+# DAEP transceiver classifier (daep_classifier.py) — own folder under dash_wiserep/models (not RUN_ID-scoped)
+_DAEP_MODELS_ROOT = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models"
+DAEP_DIR = _DAEP_MODELS_ROOT / "daep_classifier"
+DAEP_DIR.mkdir(parents=True, exist_ok=True)
+# Fresh early-stopping patience each time you re-run the script after loading a checkpoint (same weights, new stall counter)
+DAEP_RESET_PATIENCE_ON_RESUME = True
+DAEP_BOTTLENECK_LENGTH = 8 # L_b
+DAEP_BOTTLENECK_DIM = 64 # M_b
+DAEP_MODEL_DIM = 128 # Also M_b
+DAEP_NUM_HEADS = 4 # Heads in cross and self attn
+DAEP_NUM_LAYERS = 4 # N
+DAEP_FF_DIM = 256 # Linear size inside transformer block
+DAEP_DROPOUT = 0.1
+DAEP_CONCAT = True
+DAEP_SELFATTN = False
+DAEP_HEAD_HIDDEN = 128 # size of classifier head input
+DAEP_WEIGHT_DECAY = 2.5e-4
 
 # Default output filenames per mode (can override with --output); same paths as split constants
 DEFAULT_OUTPUT_80_10_10 = SPLITS_JSON_80_10_10
