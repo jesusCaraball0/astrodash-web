@@ -4,7 +4,7 @@ Retrain a DASH-style 1D CNN on WISeREP spectra.
 
 Default: ASCII spectra under data/wiserep + wiserep_splits_by_iau_80_10_10.json.
 
-Colleague dataset: python dash_retrain.py --parquet-ruiyao
+New dataset: python dash_retrain.py --parquet-ruiyao
 (requires wiserep_splits_train_val_test.json from create_trvaltest_from_trtest.py; same train/val/test keys as 80/10/10.)
 """
 from __future__ import annotations
@@ -35,7 +35,6 @@ for _name in (
 
 import helpers as helpers
 
-# PyTorch Dataset
 class WISeREPDataset(Dataset):
     """
     Loads spectra from given a list of filenames,
@@ -229,8 +228,13 @@ def build_performance_json(
     val_loss: float,
     val_acc: float,
     cm: List[List[int]],
+    *,
+    loss_by_epoch: Optional[List[List[float]]] = None,
 ) -> Dict:
-    """Build model_performance.json structure: cumulative and per-class, counts and percentages."""
+    """Build model_performance.json structure: cumulative and per-class, counts and percentages.
+
+    loss_by_epoch: optional list of [epoch, train_loss, val_loss] triples (one row per validation step).
+    """
     total_count = sum(cm[i][j] for i in range(const.NUM_CLASSES) for j in range(const.NUM_CLASSES))
     correct_count = sum(cm[c][c] for c in range(const.NUM_CLASSES))
 
@@ -246,7 +250,7 @@ def build_performance_json(
             "accuracy_pct": acc_pct,
         }
 
-    return {
+    out: Dict = {
         "best_epoch": best_epoch,
         "cumulative": {
             "total_count": total_count,
@@ -258,6 +262,9 @@ def build_performance_json(
         "confusion_matrix_raw": cm,
         "confusion_matrix_labels": const.CLASS_NAMES,
     }
+    if loss_by_epoch is not None:
+        out["loss_by_epoch"] = loss_by_epoch
+    return out
 
 
 def train(
@@ -303,6 +310,8 @@ def train(
     best_val_loss = float("inf")
     best_epoch = -1
     epochs_without_improvement = 0
+    loss_history: List[List[float]] = []
+    last_perf: Optional[Dict] = None
 
     if checkpoint_path.exists():
         try:
@@ -314,6 +323,7 @@ def train(
             best_val_loss = ck["best_val_loss"]
             best_epoch = ck["best_epoch"]
             epochs_without_improvement = ck.get("epochs_without_improvement", 0)
+            loss_history = ck.get("loss_history", [])
             print(f"Resuming from epoch {start_epoch} (best so far: epoch {best_epoch}, val_loss={best_val_loss:.4f})")
         except Exception as e:
             print(f"Could not load checkpoint: {e}. Starting from scratch.")
@@ -349,10 +359,15 @@ def train(
                 acc=f"{epoch_correct / max(epoch_total, 1):.3f}",
             )
 
+        train_loss = epoch_loss / max(epoch_total, 1)
+
         # val
         if epoch % val_every == 0:
             val_loss, val_acc, cm = evaluate(
                 model, val_loader, criterion, device
+            )
+            loss_history.append(
+                [float(epoch), round(train_loss, 6), round(val_loss, 6)]
             )
             scheduler.step(val_loss)
 
@@ -362,8 +377,9 @@ def train(
                 epochs_without_improvement = 0
                 torch.save(model.state_dict(), best_model_path)
                 perf = build_performance_json(
-                    best_epoch, val_loss, val_acc, cm
+                    best_epoch, val_loss, val_acc, cm, loss_by_epoch=loss_history
                 )
+                last_perf = perf
                 with open(out / "model_performance.json", "w") as f:
                     json.dump(perf, f, indent=2)
                 print(f"New best model saved (val_loss={val_loss:.4f})")
@@ -391,9 +407,15 @@ def train(
                 "best_val_loss": best_val_loss,
                 "best_epoch": best_epoch,
                 "epochs_without_improvement": epochs_without_improvement,
+                "loss_history": loss_history,
             },
             checkpoint_path,
         )
+
+    if last_perf is not None:
+        last_perf["loss_by_epoch"] = loss_history
+        with open(out / "model_performance.json", "w") as f:
+            json.dump(last_perf, f, indent=2)
 
     print(f"\nTraining complete. Best model at epoch {best_epoch} with val_loss={best_val_loss:.4f}")
     return best_model_path

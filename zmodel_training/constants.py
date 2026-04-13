@@ -11,7 +11,7 @@ from prod_backend.app.config.settings import get_settings
 from prod_backend.app.infrastructure.ml.data_processor import DashSpectrumProcessor
 from prod_backend.app.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository
 
-RUN_ID = "04_07_26_redshift"
+RUN_ID = "04_18_26_redshift"
 HAS_REDSHIFT = True
 
 WISEREP_DIR = PROJECT_ROOT / "data" / "wiserep"
@@ -25,30 +25,30 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Training hyperparameters
 EPOCHS = 50
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 LEARNING_RATE = 1e-4
 EARLY_STOP_PATIENCE = 20
 VAL_EVERY = 1
 NUM_WORKERS = 0
 SEED = 10
 
-# DAEP transceiver classifier (daep_classifier.py) — own folder under dash_wiserep/models (not RUN_ID-scoped)
-_DAEP_MODELS_ROOT = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models"
-DAEP_DIR = _DAEP_MODELS_ROOT / "daep_classifier_small"
-DAEP_DIR.mkdir(parents=True, exist_ok=True)
-# Fresh early-stopping patience each time you re-run the script after loading a checkpoint (same weights, new stall counter)
-DAEP_RESET_PATIENCE_ON_RESUME = True
-DAEP_BOTTLENECK_LENGTH = 4 # L_b
-DAEP_BOTTLENECK_DIM = 4 # M_b
-DAEP_MODEL_DIM = 64 # Also M_b, 128 def 
-DAEP_NUM_HEADS = 4 # Heads in cross and self attn, 8 def
-DAEP_NUM_LAYERS = 4 # N
-DAEP_FF_DIM = 128 # Linear size inside transformer block, 256 def
-DAEP_DROPOUT = 0.1
-DAEP_CONCAT = False
-DAEP_SELFATTN = True # True in paper but too expensive on my computer. Can also add preprocessing
-DAEP_HEAD_HIDDEN = 64 # size of classifier head input, 128 def
-DAEP_WEIGHT_DECAY = 2.5e-4
+# # DAEP transceiver classifier (daep_classifier.py) — own folder under dash_wiserep/models (not RUN_ID-scoped)
+# _DAEP_MODELS_ROOT = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models"
+# DAEP_DIR = _DAEP_MODELS_ROOT / "daep_classifier_small"
+# DAEP_DIR.mkdir(parents=True, exist_ok=True)
+# # Fresh early-stopping patience each time you re-run the script after loading a checkpoint (same weights, new stall counter)
+# DAEP_RESET_PATIENCE_ON_RESUME = True
+# DAEP_BOTTLENECK_LENGTH = 4 # L_b
+# DAEP_BOTTLENECK_DIM = 4 # M_b
+# DAEP_MODEL_DIM = 64 # Also M_b, 128 def 
+# DAEP_NUM_HEADS = 4 # Heads in cross and self attn, 8 def
+# DAEP_NUM_LAYERS = 4 # N
+# DAEP_FF_DIM = 128 # Linear size inside transformer block, 256 def
+# DAEP_DROPOUT = 0.1
+# DAEP_CONCAT = False
+# DAEP_SELFATTN = True # True in paper but too expensive on my computer. Can also add preprocessing
+# DAEP_HEAD_HIDDEN = 64 # size of classifier head input, 128 def
+# DAEP_WEIGHT_DECAY = 2.5e-4
 
 # Default output filenames per mode (can override with --output); same paths as split constants
 DEFAULT_OUTPUT_80_10_10 = SPLITS_JSON_80_10_10

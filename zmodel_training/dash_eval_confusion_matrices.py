@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """
 Evaluate a trained DASH WISeREP model (by run_id) on val and test splits and generate
-row-normalized confusion matrices. Saves figures under models/<run_id>/confusion_matrices/.
+row-normalized confusion matrices. When model_performance.json includes loss_by_epoch,
+also saves a loss curve PNG in the same folder. Figures live under models/<run_id>/confusion_matrices/.
 
 Two entry points:
 - eval_single_model(run_id): one model, val and test from splits
@@ -19,7 +20,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -138,6 +139,61 @@ def plot_confusion_matrix(
     plt.close(fig)
 
 
+def plot_loss_curve(
+    loss_by_epoch: List[List[float]],
+    out_path: Path,
+    run_id: str,
+) -> None:
+    """
+    Plot train and validation loss vs epoch from rows [epoch, train_loss, val_loss]
+    (as saved in model_performance.json under \"loss_by_epoch\").
+    """
+    if not loss_by_epoch:
+        return
+    epochs: List[float] = []
+    train_losses: List[float] = []
+    val_losses: List[float] = []
+    for row in loss_by_epoch:
+        if len(row) < 3:
+            continue
+        epochs.append(float(row[0]))
+        train_losses.append(float(row[1]))
+        val_losses.append(float(row[2]))
+    if not epochs:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(epochs, train_losses, label="train")
+    ax.plot(epochs, val_losses, label="validation")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title(f"loss curve for {run_id}")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def maybe_plot_loss_curve(
+    model_performance_path: Path,
+    confusion_dir: Path,
+    run_id: str,
+) -> Optional[Path]:
+    """If model_performance.json contains loss_by_epoch, save loss_curve_{run_id}.png under confusion_dir."""
+    if not model_performance_path.exists():
+        return None
+    perf = helpers.load_json(model_performance_path)
+    loss_by_epoch = perf.get("loss_by_epoch")
+    if not loss_by_epoch:
+        return None
+    out_path = confusion_dir / f"loss_curve_{run_id}.png"
+    plot_loss_curve(loss_by_epoch, out_path, run_id)
+    print(f"Saved {out_path}")
+    return out_path
+
+
 def eval_single_model(run_id: str) -> None:
     out_dir = MODELS_BASE / run_id
     model_path = out_dir / "model.pth"
@@ -183,6 +239,7 @@ def eval_single_model(run_id: str) -> None:
                 confusion_dir / f"confusion_{split_name}_{run_id}.png",
                 [sum(row) for row in cm],
             )
+        maybe_plot_loss_curve(out_dir / "model_performance.json", confusion_dir, run_id)
         return
 
     metadata = helpers.load_metadata(const.METADATA_CSV)
@@ -199,6 +256,7 @@ def eval_single_model(run_id: str) -> None:
             confusion_dir / f"confusion_{split_name}_{run_id}.png",
             [sum(row) for row in cm],
         )
+    maybe_plot_loss_curve(out_dir / "model_performance.json", confusion_dir, run_id)
 
 
 def eval_kfold_models(run_id: str) -> None:
@@ -249,6 +307,8 @@ def eval_kfold_models(run_id: str) -> None:
         val_std,
     )
     print(f"Saved {val_out}")
+
+    maybe_plot_loss_curve(out_dir / "model_performance.json", confusion_dir, run_id)
 
     test_filenames = list(splits.get("test", []))
     if not test_filenames:
