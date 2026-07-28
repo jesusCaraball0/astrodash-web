@@ -58,6 +58,42 @@ def load_metadata(metadata_path: Path) -> Dict[str, Dict[str, str]]:
             }
     return info
 
+
+def load_metadata_from_processed_csv(processed_meta_csv: Path) -> Dict[str, Dict[str, str]]:
+    """
+    Build ascii_filename -> {type, redshift} from wiserep_metadata_processed.csv.
+    When duplicate Ascii files appear, keep the first row (same order as preprocess).
+    """
+    info: Dict[str, Dict[str, str]] = {}
+    if not processed_meta_csv.exists():
+        return info
+    with open(processed_meta_csv, "r", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            fname = (row.get("Ascii file") or "").strip()
+            if not fname or fname in info:
+                continue
+            info[fname] = {
+                "type": (row.get("Obj. Type") or "").strip(),
+                "redshift": (row.get("Redshift") or "0").strip(),
+            }
+    return info
+
+
+def resolve_daep_matched_paths(has_redshift: bool) -> tuple[Path, Path, Path]:
+    """Return (splits_json, processed_meta_csv, default_out_root) for +z or -z."""
+    if has_redshift:
+        return (
+            const.SPLITS_JSON_HENNA_MATCHED_Z,
+            const.PROCESSED_META_HENNA_Z,
+            const.OUT_DIR_HENNA_MATCHED_Z,
+        )
+    return (
+        const.SPLITS_JSON_HENNA_MATCHED_NOZ,
+        const.PROCESSED_META_HENNA_NOZ,
+        const.OUT_DIR_HENNA_MATCHED_NOZ,
+    )
+
 def normalize_label(raw_type: str) -> Optional[str]:
     raw = (raw_type or "").strip()
     if not raw:

@@ -40,7 +40,7 @@ import dash_retrain
 import helpers as helpers
 from dash_retrain_kfold import stratified_k_folds
 
-MODELS_BASE = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models"
+MODELS_BASE = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison"
 
 logging.getLogger("app.infrastructure.storage.file_spectrum_repository").setLevel(logging.CRITICAL)
 logging.getLogger("app.infrastructure.ml.data_processor").setLevel(logging.CRITICAL)
@@ -50,9 +50,6 @@ def load_class_names(class_mapping_path: Path) -> List[str]:
     class_mapping = helpers.load_json(class_mapping_path)
     idx_to_name = {int(v): str(k) for k, v in class_mapping.items()}
     return [idx_to_name[i] for i in range(len(idx_to_name))]
-
-
-
 
 
 def load_model(model_path: Path, n_classes: int, device: torch.device) -> nn.Module:
@@ -342,7 +339,7 @@ def main() -> None:
         "--run-id",
         type=str,
         required=True,
-        help="Run ID (subdirectory under dash_wiserep/models/, e.g. 03_14_26_redshift)",
+        help="Run ID (subdirectory under MODELS_BASE, e.g. 03_14_26_redshift)",
     )
     args = parser.parse_args()
 

@@ -89,8 +89,8 @@ class DashSpectrumProcessor:
             # DASH training pipeline (and TF inference). The model was trained on
             # this convention; using observed-frame bounds here would change the
             # input distribution and hurt performance (e.g. Ic bias).
-            # flux_norm = self.normalise_spectrum(flux)
-            flux_norm = np.asarray(flux, dtype=float).copy()
+            flux_norm = self.normalise_spectrum(flux)
+            # flux_norm = np.asarray(flux, dtype=float).copy()
             effective_min = self.w0 if min_wave is None else min_wave
             effective_max = self.w1 if max_wave is None else max_wave
             flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
@@ -125,8 +125,8 @@ class DashSpectrumProcessor:
                 raise ValidationError(
                     f"Spectrum out of wavelength range [{self.w0}, {self.w1}] after deredshifting"
                 )
-            # flux_dereds = self.normalise_spectrum(flux_dereds)
-            flux_dereds = np.asarray(flux_dereds, dtype=float).copy()
+            flux_dereds = self.normalise_spectrum(flux_dereds)
+            # flux_dereds = np.asarray(flux_dereds, dtype=float).copy()
 
             # 4) Log-wavelength binning
             binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(
@@ -142,15 +142,15 @@ class DashSpectrumProcessor:
             cont_removed, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
 
             # 6) Mean zero within valid region
-            # mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
-            mean_zero_flux = np.copy(cont_removed)
+            mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
+            # mean_zero_flux = np.copy(cont_removed)
 
             # 7) Apodize (cosine bell) without outer offset
             apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
 
             # 8) Final normalisation and zero_non_overlap_part with outerVal=0.5
-            # flux_norm_final = self.normalise_spectrum(apodized_flux)
-            flux_norm_final = np.copy(apodized_flux)
+            flux_norm_final = self.normalise_spectrum(apodized_flux)
+            # flux_norm_final = np.copy(apodized_flux)
             flux_norm_final = self.zero_non_overlap_part(
                 flux_norm_final, min_idx, max_idx, self.DEFAULT_OUTER_VAL
             )
@@ -200,8 +200,8 @@ class DashSpectrumProcessor:
                 flux = flux[perm]
 
             # 1) Initial normalisation and wavelength limiting
-            # flux_norm = self.normalise_spectrum(flux)
-            flux_norm = np.asarray(flux, dtype=float).copy()
+            flux_norm = self.normalise_spectrum(flux)
+            # flux_norm = np.asarray(flux, dtype=float).copy()
             effective_min = self.w0 if min_wave is None else min_wave
             effective_max = self.w1 if max_wave is None else max_wave
             flux_limited = self.limit_wavelength_range(wave, flux_norm, effective_min, effective_max)
@@ -235,8 +235,8 @@ class DashSpectrumProcessor:
                 raise ValidationError(
                     f"Spectrum out of wavelength range [{self.w0}, {self.w1}]"
                 )
-            # flux_dereds = self.normalise_spectrum(flux_restricted)
-            flux_dereds = np.asarray(flux_restricted, dtype=float).copy()
+            flux_dereds = self.normalise_spectrum(flux_restricted)
+            # flux_dereds = np.asarray(flux_restricted, dtype=float).copy()
 
             # 4) Log-wavelength binning
             binned_wave, binned_flux, min_idx, max_idx = self.log_wavelength_binning(
@@ -251,15 +251,15 @@ class DashSpectrumProcessor:
             cont_removed, _ = self.continuum_removal(binned_wave, binned_flux, min_idx, max_idx)
 
             # 6) Mean zero within valid region
-            # mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
-            mean_zero_flux = np.copy(cont_removed)
+            mean_zero_flux = self.mean_zero(cont_removed, min_idx, max_idx)
+            # mean_zero_flux = np.copy(cont_removed)
 
             # 7) Apodize (cosine bell)
             apodized_flux = self.apodize(mean_zero_flux, min_idx, max_idx)
 
             # 8) Final normalisation and zero_non_overlap_part
-            # flux_norm_final = self.normalise_spectrum(apodized_flux)
-            flux_norm_final = np.copy(apodized_flux)
+            flux_norm_final = self.normalise_spectrum(apodized_flux)
+            # flux_norm_final = np.copy(apodized_flux)
             flux_norm_final = self.zero_non_overlap_part(
                 flux_norm_final, min_idx, max_idx, self.DEFAULT_OUTER_VAL
             )

@@ -7,7 +7,7 @@ Single figure: one panel per variant run vs full-pipeline baseline on the **test
 
 **Fallback:** live model eval with the **current** prod preprocessor (only if `test_metrics` is missing).
 
-Fixed mapping (baseline + variants, 1D CNN, Ruiyao split):
+Fixed mapping — redshift models (baseline + variants, 1D CNN, Ruiyao split):
   04_11_26_redshift — full preprocessing (baseline)
   04_13_26_redshift — no continuum removal
   04_14_26_redshift — no med filtering
@@ -16,14 +16,27 @@ Fixed mapping (baseline + variants, 1D CNN, Ruiyao split):
   04_17_26_redshift — no deredshifting wave
   04_18_26_redshift — no norm anywhere
 
+Fixed mapping — no-redshift models (`plot_no_redshift_preprocessing_removal_diff`):
+  04_11_26_no_redshift — full preprocessing (baseline)
+  04_12_26_no_redshift — no continuum removal
+  04_13_26_no_redshift — no med filtering
+  04_14_26_no_redshift — no apodize
+  04_15_26_no_redshift — no initial normalization
+  04_16_26_no_redshift — no norm anywhere
+
 Δ = variant - baseline (per-class recall on test).
 
-Output:
+Output (redshift models):
   data/pre_trained_models/dash_wiserep/models/preprocessing_removal_difference_vs_full.png
+
+Output (no-redshift models):
+  data/pre_trained_models/dash_wiserep/models/preprocessing_removal_difference_vs_full_no_redshift.png
 
 Usage:
   python zmodel_training/dash_save_variant_test_metrics.py   # refresh test_metrics first
   python zmodel_training/dash_preprocessing_removal_diff_plot.py
+  python zmodel_training/dash_preprocessing_removal_diff_plot.py --no-redshift
+  python zmodel_training/dash_preprocessing_removal_diff_plot.py --all
 """
 
 from __future__ import annotations
@@ -71,6 +84,16 @@ _VARIANTS = [
     ("04_16_26_redshift", "no initial normalization"),
     ("04_17_26_redshift", "no deredshifting wave"),
     ("04_18_26_redshift", "no norm anywhere"),
+]
+
+OUT_PNG_NO_REDSHIFT = MODELS_BASE / "preprocessing_removal_difference_vs_full_no_redshift.png"
+_BASELINE_ID_NO_REDSHIFT = "04_11_26_no_redshift"
+_VARIANTS_NO_REDSHIFT = [
+    ("04_12_26_no_redshift", "no continuum removal"),
+    ("04_13_26_no_redshift", "no med filtering"),
+    ("04_14_26_no_redshift", "no apodize"),
+    ("04_15_26_no_redshift", "no initial normalization"),
+    ("04_16_26_no_redshift", "no norm anywhere"),
 ]
 
 
@@ -149,15 +172,27 @@ def _test_cm_for_run(run_id: str) -> Tuple[List[str], List[List[int]]]:
     return class_names, cm
 
 
-def main() -> None:
-    all_ids = [_BASELINE_ID] + [r for r, _ in _VARIANTS]
+def plot_preprocessing_removal_diff(
+    baseline_id: str,
+    variants: List[Tuple[str, str]],
+    out_png: Path,
+    *,
+    suptitle: str = "Performance Change vs. Full Preprocessing",
+) -> None:
+    """
+    One figure: one panel per variant run vs baseline on the test split (same layout as legacy main).
+
+    Prefer `model_performance.json` → `test_metrics` for baseline and every variant; otherwise
+    falls back to live eval with the prod preprocessor.
+    """
+    all_ids = [baseline_id] + [r for r, _ in variants]
     use_saved = all(_load_test_metrics_from_json(r) is not None for r in all_ids)
 
     if use_saved:
         print(
             "Using model_performance.json['test_metrics'] (from dash_save_variant_test_metrics.py)."
         )
-        base_t = _load_test_metrics_from_json(_BASELINE_ID)
+        base_t = _load_test_metrics_from_json(baseline_id)
         assert base_t is not None
         base_names, base_pc, base_overall = base_t
     else:
@@ -165,13 +200,19 @@ def main() -> None:
             "Warning: missing test_metrics in some runs; using live eval with prod preprocessor. "
             "Run: python zmodel_training/dash_save_variant_test_metrics.py"
         )
-        base_names, base_cm = _test_cm_for_run(_BASELINE_ID)
+        base_names, base_cm = _test_cm_for_run(baseline_id)
         base_pc, base_overall = _recall_pct_from_cm(base_cm, base_names)
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-    fig.suptitle("Performance Change vs. Full Preprocessing", fontsize=14, fontweight="bold")
+    n_panels = len(variants)
+    nrows, ncols = 2, 3
+    fig, axes = plt.subplots(nrows, ncols, figsize=(15, 9))
+    axes_flat = np.ravel(axes)
+    for j in range(n_panels, nrows * ncols):
+        axes_flat[j].set_visible(False)
 
-    for ax, (run_id, panel_title) in zip(np.ravel(axes), _VARIANTS):
+    fig.suptitle(suptitle, fontsize=14, fontweight="bold")
+
+    for ax, (run_id, panel_title) in zip(axes_flat, variants):
         if use_saved:
             loaded = _load_test_metrics_from_json(run_id)
             assert loaded is not None
@@ -195,7 +236,6 @@ def main() -> None:
         ax.set_ylabel("Accuracy Change (pp)")
         ax.set_title(panel_title, fontsize=11)
         ax.grid(axis="y", alpha=0.3)
-        src = "saved test_metrics" if use_saved else "live eval (prod preprocessor)"
         ax.text(
             0.02,
             0.98,
@@ -215,14 +255,35 @@ def main() -> None:
         style="italic",
     )
     fig.subplots_adjust(bottom=0.08, top=0.92)
-    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT_PNG, dpi=200, bbox_inches="tight")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved {OUT_PNG}")
+    print(f"Saved {out_png}")
+
+
+def main() -> None:
+    plot_preprocessing_removal_diff(_BASELINE_ID, _VARIANTS, OUT_PNG)
+
+
+def plot_no_redshift_preprocessing_removal_diff() -> None:
+    """Same chart as `main()` but for no-redshift runs (baseline `04_11_26_no_redshift`)."""
+    plot_preprocessing_removal_diff(
+        _BASELINE_ID_NO_REDSHIFT,
+        _VARIANTS_NO_REDSHIFT,
+        OUT_PNG_NO_REDSHIFT,
+        suptitle="Performance Change vs. Full Preprocessing (no z)",
+    )
 
 
 if __name__ == "__main__":
     try:
-        main()
+        argv = sys.argv[1:]
+        if "--all" in argv:
+            main()
+            plot_no_redshift_preprocessing_removal_diff()
+        elif "--no-redshift" in argv:
+            plot_no_redshift_preprocessing_removal_diff()
+        else:
+            main()
     except (FileNotFoundError, ValueError) as e:
         raise SystemExit(str(e)) from e

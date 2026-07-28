@@ -2,10 +2,15 @@
 """
 Retrain a DASH-style 1D CNN on WISeREP spectra.
 
-Default: ASCII spectra under data/wiserep + wiserep_splits_by_iau_80_10_10.json.
+Default: ASCII spectra under data/wiserep + daep_compatible_split.json.
 
-New dataset: python dash_retrain.py --parquet-ruiyao
-(requires wiserep_splits_train_val_test.json from create_trvaltest_from_trtest.py; same train/val/test keys as 80/10/10.)
+Henna-dedup matched (recommended for architecture comparison):
+  python zmodel_training/create_henna_matched_dash_split.py
+  python zmodel_training/dash_retrain.py --daep-matched --seed 0
+  python zmodel_training/run_daep_matched_dash_ensemble.py
+
+Parquet (legacy colleague bundle):
+  python dash_retrain.py --parquet-ruiyao
 """
 from __future__ import annotations
 
@@ -430,27 +435,75 @@ def main() -> None:
         action="store_true",
         help="Use parquet_dataset (parquet + wiserep_split_ids.json) instead of ASCII + 80/10/10 JSON.",
     )
+    parser.add_argument(
+        "--daep-matched",
+        action="store_true",
+        help="Use DAEP-aligned split from preprocessed metadata (create_daep_matched_dash_split.py).",
+    )
+    parser.add_argument(
+        "--splits-json",
+        type=Path,
+        default=None,
+        help="Override splits JSON path (ASCII mode only).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=const.SEED,
+        help=f"Training RNG seed (default: {const.SEED}).",
+    )
+    parser.add_argument(
+        "--no-redshift",
+        action="store_true",
+        help="Train without redshift in model input (observed-frame preprocessing).",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Output directory for checkpoints/config (default: depends on mode).",
+    )
     args = parser.parse_args()
 
+    if args.parquet_ruiyao and args.daep_matched:
+        raise SystemExit("Use only one of --parquet-ruiyao or --daep-matched.")
+
+    has_redshift = not args.no_redshift
+    run_id = f"iter_{args.seed}"
+    helpers.set_seed(args.seed)
+
+    if args.out_dir is not None:
+        out_dir = args.out_dir.resolve()
+    elif args.daep_matched:
+        _, _, out_root = helpers.resolve_daep_matched_paths(has_redshift)
+        out_dir = (out_root / run_id).resolve()
+    else:
+        out_dir = const.OUT_DIR.resolve() if not args.no_redshift else (
+            const.PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_noz" / run_id
+        ).resolve()
+
     print("Starting training for DASH 1D CNN Model on Wiserep dataset")
+    print(f"  mode={'daep_matched' if args.daep_matched else ('parquet' if args.parquet_ruiyao else 'ascii')}")
+    print(f"  has_redshift={has_redshift}  seed={args.seed}  out_dir={out_dir}")
 
     device = helpers.get_device()
     print(f"Device: {device}")
 
-    const.OUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(const.OUT_DIR / "class_mapping.json", "w") as f:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "class_mapping.json", "w") as f:
         json.dump({n: const.CLASS_TO_IDX[n] for n in const.CLASS_NAMES}, f, indent=2)
 
     parquet_training_config_extra: Optional[Dict] = None
+    processed_meta_csv: Optional[str] = None
     if args.parquet_ruiyao:
         import parquet_dataset as rpd
 
-        df, metadata, train_ids, val_ids, test_ids = rpd.load_df_metadata_train_val_ids(const.SEED)
+        df, metadata, train_ids, val_ids, test_ids = rpd.load_df_metadata_train_val_ids(args.seed)
         test_n = len(test_ids)
         splits_file = str(rpd.RUIYAO_TRAIN_VAL_TEST_JSON)
         class_weights = helpers.compute_class_weights_from_filenames(train_ids, metadata)
         train_loader = DataLoader(
-            rpd.ParquetSpectrumDataset(train_ids, df, has_redshift=const.HAS_REDSHIFT),
+            rpd.ParquetSpectrumDataset(train_ids, df, has_redshift=has_redshift),
             batch_size=const.BATCH_SIZE,
             shuffle=True,
             num_workers=0,
@@ -458,7 +511,7 @@ def main() -> None:
             pin_memory=(device.type == "cuda"),
         )
         val_loader = DataLoader(
-            rpd.ParquetSpectrumDataset(val_ids, df, has_redshift=const.HAS_REDSHIFT),
+            rpd.ParquetSpectrumDataset(val_ids, df, has_redshift=has_redshift),
             batch_size=const.BATCH_SIZE,
             shuffle=False,
             num_workers=0,
@@ -472,37 +525,71 @@ def main() -> None:
             "test_spectrum_ids_count": test_n,
         }
     else:
-        splits = helpers.load_json(const.SPLITS_JSON_80_10_10)
+        if args.daep_matched:
+            splits_path, meta_csv, _ = helpers.resolve_daep_matched_paths(has_redshift)
+            processed_meta_csv = str(meta_csv.resolve())
+            data_mode = "daep_matched_ascii"
+        else:
+            splits_path = args.splits_json or const.SPLITS_JSON_80_10_10
+            meta_csv = const.METADATA_CSV
+            data_mode = "ascii"
+
+        splits_path = Path(splits_path).resolve()
+        if not splits_path.is_file():
+            hint = (
+                " Run: python zmodel_training/create_henna_matched_dash_split.py"
+                if args.daep_matched
+                else ""
+            )
+            raise SystemExit(f"Missing splits JSON: {splits_path}.{hint}")
+
+        splits = helpers.load_json(splits_path)
         print(
-            f"Splits: train={len(splits.get('train', []))}  val={len(splits.get('val', []))}  "
-            f"test={len(splits.get('test', []))}"
+            f"Splits ({splits_path.name}): train={len(splits.get('train', []))}  "
+            f"val={len(splits.get('val', []))}  test={len(splits.get('test', []))}"
         )
-        print(f"Loading metadata from {const.METADATA_CSV}")
-        metadata = helpers.load_metadata(const.METADATA_CSV)
+        if args.daep_matched:
+            print(f"Loading metadata from processed CSV {meta_csv}")
+            metadata = helpers.load_metadata_from_processed_csv(meta_csv)
+        else:
+            print(f"Loading metadata from {meta_csv}")
+            metadata = helpers.load_metadata(meta_csv)
         print(f"{len(metadata)} filename -> (type, redshift) entries")
+
         train_filenames = list(splits["train"])
         val_filenames = list(splits["val"])
-        splits_file = str(const.SPLITS_JSON_80_10_10)
+        splits_file = str(splits_path)
         class_weights = helpers.compute_class_weights_from_filenames(train_filenames, metadata)
         train_loader = helpers.make_loader(
-            train_filenames, metadata, const.HAS_REDSHIFT, device,
-            shuffle=True, batch_size=const.BATCH_SIZE,
+            train_filenames,
+            metadata,
+            has_redshift,
+            device,
+            shuffle=True,
+            batch_size=const.BATCH_SIZE,
         )
         val_loader = helpers.make_loader(
-            val_filenames, metadata, const.HAS_REDSHIFT, device,
+            val_filenames,
+            metadata,
+            has_redshift,
+            device,
             batch_size=const.BATCH_SIZE,
+        )
+        print(
+            f"Effective dataset sizes: train={len(train_loader.dataset)}  "
+            f"val={len(val_loader.dataset)}"
         )
 
     model = DashCNN1D(input_length=const.TARGET_LENGTH, num_classes=const.NUM_CLASSES).to(device)
     best_path = train(
         model, train_loader, val_loader, device, class_weights,
         epochs=const.EPOCHS, lr=const.LEARNING_RATE, patience=const.EARLY_STOP_PATIENCE,
-        val_every=const.VAL_EVERY, out_dir=None,
+        val_every=const.VAL_EVERY, out_dir=out_dir,
     )
 
     training_config = {
-        "run_id": const.RUN_ID,
-        "has_redshift": const.HAS_REDSHIFT,
+        "run_id": run_id,
+        "has_redshift": has_redshift,
         "target_length": const.TARGET_LENGTH,
         "wave_min": const.WAVE_MIN,
         "wave_max": const.WAVE_MAX,
@@ -515,17 +602,22 @@ def main() -> None:
         "class_weights": class_weights.tolist(),
         "splits_file": splits_file,
         "k_fold": 1,
-        "seed": const.SEED,
+        "seed": args.seed,
+        "data_mode": parquet_training_config_extra.get("data_mode", data_mode)
+        if parquet_training_config_extra
+        else data_mode,
     }
+    if processed_meta_csv is not None:
+        training_config["processed_meta_csv"] = processed_meta_csv
     if parquet_training_config_extra is not None:
         training_config.update(parquet_training_config_extra)
 
-    with open(const.OUT_DIR / "training_config.json", "w") as f:
+    with open(out_dir / "training_config.json", "w") as f:
         json.dump(training_config, f, indent=2)
 
     print(f"\nSaved: {best_path}")
-    print(f"  Config: {const.OUT_DIR / 'training_config.json'}")
-    print(f"  Performance: {const.OUT_DIR / 'model_performance.json'}")
+    print(f"  Config: {out_dir / 'training_config.json'}")
+    print(f"  Performance: {out_dir / 'model_performance.json'}")
 
 
 if __name__ == "__main__":

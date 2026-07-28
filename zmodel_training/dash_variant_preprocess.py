@@ -194,13 +194,18 @@ def preprocess_spectrum_variant(
     target_length: int,
     flags: PreprocessFlags,
 ) -> Optional[np.ndarray]:
-    """Same contract as helpers.preprocess_spectrum: returns nw-bin flux only; parquet dataset appends z."""
+    """Same contract as helpers.preprocess_spectrum: returns nw-bin flux only; parquet dataset appends z.
+
+    For no-redshift models (`redshift is None`), the pipeline must use `deredshift=False`
+    (observed-frame mask); pass `z=0.0` into the shared implementation (unused when deredshift=False).
+    """
     del target_length  # unused; kept for call compatibility
     try:
-        if redshift is None:
+        if redshift is None and flags.deredshift:
             return None
+        z_use = 0.0 if redshift is None else float(redshift)
         processed_flux, _, _, _ = process_dash_with_flags(
-            wave, flux, float(redshift), flags, smooth=0, min_wave=None, max_wave=None
+            wave, flux, z_use, flags, smooth=0, min_wave=None, max_wave=None
         )
         return processed_flux.astype(np.float32)
     except Exception:

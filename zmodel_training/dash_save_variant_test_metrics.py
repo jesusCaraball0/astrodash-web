@@ -8,6 +8,10 @@ This fixes eval drift when prod data_processor.py no longer matches the code sta
 
 Usage:
   python zmodel_training/dash_save_variant_test_metrics.py
+
+Covers both redshift and no-redshift run IDs (see RUN_VARIANT_FLAGS). Uses each run's
+`training_config.json` → `has_redshift` and matching `PreprocessFlags`.
+The duplicate pipeline lives in `dash_variant_preprocess.py` (imported here, not run standalone).
 """
 
 from __future__ import annotations
@@ -52,7 +56,11 @@ for _name in (
 
 # Baseline + ablations (1D CNN, Ruiyao split). Flags must match what each run was trained with.
 _FULL = PreprocessFlags()
+# Observed-frame pipeline (no z in model input): same as process() but with deredshift=False.
+_NOZ = replace(_FULL, deredshift=False)
+
 RUN_VARIANT_FLAGS: Dict[str, PreprocessFlags] = {
+    # --- redshift models (z in parquet used for deredshifting) ---
     "04_11_26_redshift": _FULL,
     "04_13_26_redshift": replace(_FULL, use_continuum_removal=False),
     "04_14_26_redshift": replace(_FULL, use_medfilt=False),
@@ -61,6 +69,20 @@ RUN_VARIANT_FLAGS: Dict[str, PreprocessFlags] = {
     "04_17_26_redshift": replace(_FULL, deredshift=False),
     "04_18_26_redshift": replace(
         _FULL,
+        initial_norm=False,
+        norm_after_slice=False,
+        continuum_tail_norm=False,
+        mean_zero=False,
+        final_norm=False,
+    ),
+    # --- no-redshift models (has_redshift=false; preprocess_spectrum_variant with z=None) ---
+    "04_11_26_no_redshift": _NOZ,
+    "04_12_26_no_redshift": replace(_NOZ, use_continuum_removal=False),
+    "04_13_26_no_redshift": replace(_NOZ, use_medfilt=False),
+    "04_14_26_no_redshift": replace(_NOZ, use_apodize=False),
+    "04_15_26_no_redshift": replace(_NOZ, initial_norm=False),
+    "04_16_26_no_redshift": replace(
+        _NOZ,
         initial_norm=False,
         norm_after_slice=False,
         continuum_tail_norm=False,
@@ -124,7 +146,12 @@ def _test_cm(run_id: str, flags: PreprocessFlags):
         raise SystemExit(f"{run_id}: training_config has no parquet path (this script supports Ruiyao parquet only).")
 
     df = pd.read_parquet(Path(parquet_path))
-    has_redshift = config.get("has_redshift", True)
+    has_redshift = bool(config.get("has_redshift", True))
+    if not has_redshift and flags.deredshift:
+        raise ValueError(
+            f"{run_id}: training has_redshift=false but flags still have deredshift=True; "
+            "fix RUN_VARIANT_FLAGS for this run."
+        )
     device = helpers.get_device()
     class_names = load_class_names(out_dir / "class_mapping.json")
     n_classes = len(class_names)

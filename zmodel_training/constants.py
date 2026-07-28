@@ -11,26 +11,47 @@ from prod_backend.app.config.settings import get_settings
 from prod_backend.app.infrastructure.ml.data_processor import DashSpectrumProcessor
 from prod_backend.app.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository
 
-RUN_ID = "04_18_26_redshift"
+# Training hyperparameters
+EPOCHS = 50
+BATCH_SIZE = 64
+LEARNING_RATE = 2e-5
+EARLY_STOP_PATIENCE = 5
+VAL_EVERY = 1
+NUM_WORKERS = 0
+SEED = 9
+
+RUN_ID = f"iter_{SEED}"
 HAS_REDSHIFT = True
 
 WISEREP_DIR = PROJECT_ROOT / "data" / "wiserep"
 SPECTRA_DIR = WISEREP_DIR / "wiserep_data_noSEDM"
 METADATA_CSV = WISEREP_DIR / "wiserep_metadata.csv"
+# Preprocessed bundles (same rows / IAU split as DAEP classifiers)
+WISEREP_PREPROCESSED_Z = PROJECT_ROOT / "WiserepData" / "Test" / "data_z"
+WISEREP_PREPROCESSED_NOZ = PROJECT_ROOT / "WiserepData" / "Test" / "data_no_z"
+PROCESSED_META_Z = WISEREP_PREPROCESSED_Z / "wiserep_metadata_processed.csv"
+PROCESSED_META_NOZ = WISEREP_PREPROCESSED_NOZ / "wiserep_metadata_processed.csv"
 # Splits JSONs: 80/10/10 for single-run train/val/test, 90/10 for k-fold (train+test only)
-SPLITS_JSON_80_10_10 = WISEREP_DIR / "wiserep_splits_by_iau_80_10_10.json"
+SPLITS_JSON_80_10_10 = WISEREP_DIR / "daep_compatible_split.json"
 SPLITS_JSON_90_10 = WISEREP_DIR / "wiserep_splits_by_iau_90_10.json"
-OUT_DIR = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models" / RUN_ID
+# DAEP-aligned splits (from create_daep_matched_dash_split.py)
+SPLITS_JSON_DAEP_MATCHED_Z = WISEREP_DIR / "daep_matched_split_z.json"
+SPLITS_JSON_DAEP_MATCHED_NOZ = WISEREP_DIR / "daep_matched_split_noz.json"
+# Checkpoint roots
+OUT_DIR = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_z" / RUN_ID
+OUT_DIR_DAEP_MATCHED_Z = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_z"
+OUT_DIR_DAEP_MATCHED_NOZ = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_noz"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Training hyperparameters
-EPOCHS = 50
-BATCH_SIZE = 64
-LEARNING_RATE = 1e-4
-EARLY_STOP_PATIENCE = 20
-VAL_EVERY = 1
-NUM_WORKERS = 0
-SEED = 10
+# Henna deduplicated bundles (create_henna_matched_dash_split.py)
+WISEREP_HENNA_Z = PROJECT_ROOT / "data" / "wiserep_henna" / "deredshifted"
+WISEREP_HENNA_NOZ = PROJECT_ROOT / "data" / "wiserep_henna" / "Noderedshift"
+PROCESSED_META_HENNA_Z = WISEREP_HENNA_Z / "wiserep_metadata_processed.csv"
+PROCESSED_META_HENNA_NOZ = WISEREP_HENNA_NOZ / "wiserep_metadata_processed.csv"
+SPLITS_JSON_HENNA_MATCHED_Z = WISEREP_DIR / "henna_matched_split_z.json"
+SPLITS_JSON_HENNA_MATCHED_NOZ = WISEREP_DIR / "henna_matched_split_noz.json"
+OUT_DIR_HENNA_MATCHED_Z = PROJECT_ROOT / "data" / "pre_trained_models" / "henna_matched_comparison_z"
+OUT_DIR_HENNA_MATCHED_NOZ = PROJECT_ROOT / "data" / "pre_trained_models" / "henna_matched_comparison_noz"
 
 # # DAEP transceiver classifier (daep_classifier.py) — own folder under dash_wiserep/models (not RUN_ID-scoped)
 # _DAEP_MODELS_ROOT = PROJECT_ROOT / "data" / "pre_trained_models" / "dash_wiserep" / "models"
@@ -81,4 +102,3 @@ WAVE_MIN, WAVE_MAX = _SETTINGS.w0, _SETTINGS.w1
 # global DashSpectrumProcessor (outputs nw bins; we append z to get TARGET_LENGTH)
 _PROCESSOR = DashSpectrumProcessor(WAVE_MIN, WAVE_MAX, _SETTINGS.nw)
 _FILE_REPO = FileSpectrumRepository(_SETTINGS)
-

@@ -20,6 +20,9 @@ astrodash
 batch_upload.zip
 zmodel_training/Perceiver-diffusion-autoencoder/
 
+WiserepData/Perceiver-diffusion-autoencoder/
+WiserepData/Test
+
 prod_backend/data/*
 data/*
 astrodash_old/
