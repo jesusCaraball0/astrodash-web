@@ -4,10 +4,14 @@ Retrain a DASH-style 1D CNN on WISeREP spectra.
 
 Default: ASCII spectra under data/wiserep + daep_compatible_split.json.
 
-Henna-dedup matched (recommended for architecture comparison):
-  python zmodel_training/create_henna_matched_dash_split.py
+DAEP-aligned matched (same preprocessed meta / IAU split as DAEP classifiers):
+  python zmodel_training/create_daep_matched_dash_split.py
   python zmodel_training/dash_retrain.py --daep-matched --seed 0
   python zmodel_training/run_daep_matched_dash_ensemble.py
+
+Henna-dedup matched:
+  python zmodel_training/create_henna_matched_dash_split.py
+  python zmodel_training/dash_retrain.py --henna-matched --seed 0
 
 Parquet (legacy colleague bundle):
   python dash_retrain.py --parquet-ruiyao
@@ -441,6 +445,11 @@ def main() -> None:
         help="Use DAEP-aligned split from preprocessed metadata (create_daep_matched_dash_split.py).",
     )
     parser.add_argument(
+        "--henna-matched",
+        action="store_true",
+        help="Use Henna-dedup split from preprocessed metadata (create_henna_matched_dash_split.py).",
+    )
+    parser.add_argument(
         "--splits-json",
         type=Path,
         default=None,
@@ -465,8 +474,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.parquet_ruiyao and args.daep_matched:
-        raise SystemExit("Use only one of --parquet-ruiyao or --daep-matched.")
+    matched_flags = sum(bool(x) for x in (args.parquet_ruiyao, args.daep_matched, args.henna_matched))
+    if matched_flags > 1:
+        raise SystemExit("Use only one of --parquet-ruiyao, --daep-matched, or --henna-matched.")
 
     has_redshift = not args.no_redshift
     run_id = f"iter_{args.seed}"
@@ -477,13 +487,24 @@ def main() -> None:
     elif args.daep_matched:
         _, _, out_root = helpers.resolve_daep_matched_paths(has_redshift)
         out_dir = (out_root / run_id).resolve()
+    elif args.henna_matched:
+        _, _, out_root = helpers.resolve_henna_matched_paths(has_redshift)
+        out_dir = (out_root / run_id).resolve()
     else:
         out_dir = const.OUT_DIR.resolve() if not args.no_redshift else (
             const.PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_noz" / run_id
         ).resolve()
 
+    if args.daep_matched:
+        mode_name = "daep_matched"
+    elif args.henna_matched:
+        mode_name = "henna_matched"
+    elif args.parquet_ruiyao:
+        mode_name = "parquet"
+    else:
+        mode_name = "ascii"
     print("Starting training for DASH 1D CNN Model on Wiserep dataset")
-    print(f"  mode={'daep_matched' if args.daep_matched else ('parquet' if args.parquet_ruiyao else 'ascii')}")
+    print(f"  mode={mode_name}")
     print(f"  has_redshift={has_redshift}  seed={args.seed}  out_dir={out_dir}")
 
     device = helpers.get_device()
@@ -529,6 +550,10 @@ def main() -> None:
             splits_path, meta_csv, _ = helpers.resolve_daep_matched_paths(has_redshift)
             processed_meta_csv = str(meta_csv.resolve())
             data_mode = "daep_matched_ascii"
+        elif args.henna_matched:
+            splits_path, meta_csv, _ = helpers.resolve_henna_matched_paths(has_redshift)
+            processed_meta_csv = str(meta_csv.resolve())
+            data_mode = "daep_matched_ascii"  # same loader path; split/meta differ
         else:
             splits_path = args.splits_json or const.SPLITS_JSON_80_10_10
             meta_csv = const.METADATA_CSV
@@ -536,11 +561,12 @@ def main() -> None:
 
         splits_path = Path(splits_path).resolve()
         if not splits_path.is_file():
-            hint = (
-                " Run: python zmodel_training/create_henna_matched_dash_split.py"
-                if args.daep_matched
-                else ""
-            )
+            if args.daep_matched:
+                hint = " Run: python zmodel_training/create_daep_matched_dash_split.py"
+            elif args.henna_matched:
+                hint = " Run: python zmodel_training/create_henna_matched_dash_split.py"
+            else:
+                hint = ""
             raise SystemExit(f"Missing splits JSON: {splits_path}.{hint}")
 
         splits = helpers.load_json(splits_path)
@@ -548,7 +574,7 @@ def main() -> None:
             f"Splits ({splits_path.name}): train={len(splits.get('train', []))}  "
             f"val={len(splits.get('val', []))}  test={len(splits.get('test', []))}"
         )
-        if args.daep_matched:
+        if args.daep_matched or args.henna_matched:
             print(f"Loading metadata from processed CSV {meta_csv}")
             metadata = helpers.load_metadata_from_processed_csv(meta_csv)
         else:

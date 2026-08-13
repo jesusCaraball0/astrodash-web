@@ -1,9 +1,18 @@
 """
 Compare micro-average ensemble ROC curves across model architectures.
 
+Six henna-matched ensembles:
+  - DAEP diffusion ±z     → WiserepData/Test/daep_comparison(_noz)
+  - DAEP no-diffusion ±z  → WiserepData/Test/daep_comparison_init(_noz)
+  - Dash 1D CNN ±z        → data/pre_trained_models/henna_matched_comparison_{z,noz}
+
 Usage:
+  # write a NEW file (keeps existing architecture_comparison_micro.png)
+  python WiserepData/roc_architecture_comparison.py \\
+      WiserepData/Test/architecture_comparison_micro_henna.png
+
+  # default path (overwrites Test/architecture_comparison_micro.png)
   python WiserepData/roc_architecture_comparison.py
-  python WiserepData/roc_architecture_comparison.py /path/to/output.png
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ for path in (SCRIPT_DIR, PROJECT_ROOT, ZMODEL_DIR):
 
 import roc_ensemble_daep_comparison as dash_roc
 import roc_ensemble_wiserep as wiserep_roc
+from train_latent import latent_dir_for, normalize_latent_meta, resolve_latent_npz
 
 FPR_GRID = np.linspace(0.0, 1.0, 101)
 DEFAULT_OUTPUT = SCRIPT_DIR / "Test" / "architecture_comparison_micro.png"
@@ -104,13 +114,13 @@ SPECS = [
     ),
     EnsembleSpec(
         label=dash_title(True),
-        root=PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_z",
+        root=PROJECT_ROOT / "data" / "pre_trained_models" / "henna_matched_comparison_z",
         kind="dash",
         has_redshift=True,
     ),
     EnsembleSpec(
         label=dash_title(False),
-        root=PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_noz",
+        root=PROJECT_ROOT / "data" / "pre_trained_models" / "henna_matched_comparison_noz",
         kind="dash",
         has_redshift=False,
     ),
@@ -278,10 +288,15 @@ def collect_wiserep_predictions(
 ) -> tuple[np.ndarray, list[np.ndarray]]:
     data_dir = wiserep_roc.data_dir_for(has_redshift)
     default_meta_csv = data_dir / "wiserep_metadata_processed.csv"
-    latent_npz_fallback = data_dir / "latent_raw_z.npz"
+    # Latents live under 1024d2 / nodered1024d2, not the spectra dirs.
+    try:
+        latent_npz_fallback = resolve_latent_npz(latent_dir_for(has_redshift))
+    except FileNotFoundError:
+        latent_npz_fallback = data_dir / "latent_raw_z.npz"
 
     meta_csv = resolve_wiserep_meta_csv(run_dirs, device, default_meta_csv)
-    meta = pd.read_csv(meta_csv, low_memory=False).reset_index(drop=True)
+    # Henna meta_universal.csv uses sn_name_used / raw_type; map to IAU name / Obj. Type.
+    meta = normalize_latent_meta(pd.read_csv(meta_csv, low_memory=False))
     _, _, te_idx = wiserep_roc.split_row_indices_by_iau_train_val_test(
         meta,
         wiserep_roc.IAU_COLUMN,

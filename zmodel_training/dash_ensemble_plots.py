@@ -8,8 +8,8 @@ Uses the same test loader path as roc_curves.py / roc_ensemble_daep_comparison.p
 (reads each run's training_config.json → splits_file + processed_meta_csv).
 
 Usage:
-  python zmodel_training/dash_ensemble_plots.py data/pre_trained_models/henna_matched_comparison_z
-  python zmodel_training/dash_ensemble_plots.py data/pre_trained_models/henna_matched_comparison_noz
+  python zmodel_training/dash_ensemble_plots.py data/pre_trained_models/daep_comparison_z
+  python zmodel_training/dash_ensemble_plots.py data/pre_trained_models/daep_comparison_noz
 """
 
 from __future__ import annotations
@@ -47,19 +47,28 @@ for _name in (
 
 CKPT_NAME = "model.pth"
 ITER_DIR_RE = re.compile(r"^iter[_]?(\d+)$")
+SPLIT_DIR_RE = re.compile(r"^split_(\d+)$")
 
 
 def discover_run_dirs(root: Path) -> list[Path]:
-    found: list[tuple[int, Path]] = []
+    """Prefer iter_* training-seed runs; else split_* data-split runs."""
     if not root.is_dir():
         raise FileNotFoundError(root)
-    for p in root.iterdir():
-        if not p.is_dir():
-            continue
-        m = ITER_DIR_RE.match(p.name)
-        if m and (p / CKPT_NAME).is_file() and (p / "model_performance.json").is_file():
-            found.append((int(m.group(1)), p))
-    found.sort(key=lambda x: x[0])
+
+    def _collect(pattern: re.Pattern[str]) -> list[tuple[int, Path]]:
+        found: list[tuple[int, Path]] = []
+        for p in root.iterdir():
+            if not p.is_dir():
+                continue
+            m = pattern.fullmatch(p.name)
+            if m and (p / CKPT_NAME).is_file() and (p / "model_performance.json").is_file():
+                found.append((int(m.group(1)), p))
+        found.sort(key=lambda x: x[0])
+        return found
+
+    found = _collect(ITER_DIR_RE)
+    if not found:
+        found = _collect(SPLIT_DIR_RE)
     return [p for _, p in found]
 
 
@@ -150,10 +159,10 @@ def _stack_loss_curves(
     )
 
 
-def _title_prefix(has_redshift: bool) -> str:
-    if has_redshift:
-        return "Dash 1D CNN with Redshift"
-    return "Dash 1D CNN without Redshift"
+def _title_prefix(has_redshift: bool, *, data_split_ensemble: bool) -> str:
+    z_tag = "with Redshift" if has_redshift else "without Redshift"
+    split_tag = "data-split ensemble" if data_split_ensemble else "training-seed ensemble"
+    return f"Dash 1D CNN {z_tag} ({split_tag})"
 
 
 def main() -> None:
@@ -164,8 +173,8 @@ def main() -> None:
         "comparison_root",
         type=Path,
         nargs="?",
-        default=const.OUT_DIR_HENNA_MATCHED_Z,
-        help="Folder containing iter_0, iter_1, … (default: henna_matched_comparison_z)",
+        default=const.OUT_DIR_DAEP_MATCHED_Z,
+        help="Folder containing iter_0, iter_1, … (default: daep_comparison_z)",
     )
     parser.add_argument(
         "--cm-out",
@@ -187,6 +196,7 @@ def main() -> None:
         raise SystemExit(
             f"No runs with {CKPT_NAME} + model_performance.json under {root}"
         )
+    data_split_ensemble = all(SPLIT_DIR_RE.fullmatch(p.name) for p in run_dirs)
 
     cm_out = (args.cm_out or root / "dash_cm.png").expanduser().resolve()
     loss_out = (args.loss_out or root / "dash_loss_curves.png").expanduser().resolve()
@@ -292,8 +302,8 @@ def main() -> None:
         mat_std_pct=cm_recall_std,
     )
     fig_cm.suptitle(
-        f"{_title_prefix(has_redshift)} Confusion Matrix | "
-        f"accuracy {100.0 * acc:.1f} ± {100.0 * acc_std:.1f}%",
+        f"{_title_prefix(has_redshift, data_split_ensemble=data_split_ensemble)} "
+        f"Confusion Matrix | accuracy {100.0 * acc:.1f} ± {100.0 * acc_std:.1f}%",
         y=1.02,
     )
     fig_cm.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])

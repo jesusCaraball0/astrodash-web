@@ -57,7 +57,7 @@ def daep_split_counts(meta_csv: Path) -> dict[str, int]:
 
 def compare_variant(label: str, meta_csv: Path, split_json: Path) -> None:
     if not split_json.is_file():
-        print(f"\n{label}: MISSING split JSON — run create_henna_matched_dash_split.py")
+        print(f"\n{label}: MISSING split JSON — run create_daep_matched_dash_split.py")
         return
 
     daep = daep_split_counts(meta_csv)

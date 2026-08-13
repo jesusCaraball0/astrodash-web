@@ -41,6 +41,7 @@ from train_latent import (
     LatentClassifier,
     LatentDataset,
     collate_latent,
+    load_assignment_indices_from_dir,
     normalize_latent_meta,
 )
 from iau_train_val_test_split import IAU_SPLIT_SEED, split_row_indices_by_iau_train_val_test
@@ -53,35 +54,114 @@ from TwinsClassifier_Wiserep import (
 from TwinsModel_Wiserep import device_from_str
 from TwinsTrain_Wiserep import set_seeds
 
-# Prefer underscore form (iter_0) from train_latent; ignore legacy iter0/iter18 dirs.
+# Prefer underscore form (iter_0) from train_latent; also support split_{N} data-split runs.
 ITER_DIR_RE = re.compile(r"^iter_(\d+)$")
 ITER_DIR_RE_LEGACY = re.compile(r"^iter(\d+)$")
+SPLIT_DIR_RE = re.compile(r"^split_(\d+)$")
 
 
-def _iter_sort_key(path: pathlib.Path) -> tuple[int, str]:
-    match = ITER_DIR_RE.fullmatch(path.name) or ITER_DIR_RE_LEGACY.fullmatch(path.name)
-    return (int(match.group(1)) if match else sys.maxsize, path.name)
+def _run_sort_key(path: pathlib.Path) -> tuple[int, int, str]:
+    for pattern, group in (
+        (ITER_DIR_RE, 0),
+        (SPLIT_DIR_RE, 1),
+        (ITER_DIR_RE_LEGACY, 2),
+    ):
+        match = pattern.fullmatch(path.name)
+        if match:
+            return (group, int(match.group(1)), path.name)
+    return (3, sys.maxsize, path.name)
 
 
-def discover_run_dirs(root: pathlib.Path) -> list[pathlib.Path]:
-    def _collect(pattern: re.Pattern[str]) -> list[pathlib.Path]:
-        return [
-            p
-            for p in root.iterdir()
-            if p.is_dir()
-            and (p / "classifier_best.pt").is_file()
-            and (p / "model_performance.json").is_file()
-            and pattern.fullmatch(p.name)
-        ]
+def discover_run_dirs(
+    root: pathlib.Path,
+    *,
+    run_style: str = "auto",
+) -> list[pathlib.Path]:
+    """Discover ensemble run dirs.
 
-    runs = _collect(ITER_DIR_RE)
-    if not runs:
+    ``run_style``:
+      - ``auto``: prefer ``iter_*``, else ``split_*``, else legacy ``iterN``
+      - ``underscore``: only ``iter_*``
+      - ``legacy``: only ``iterN`` (no underscore), excluding ``iter_N``
+      - ``split``: only ``split_*``
+    """
+
+    def _collect(pattern: re.Pattern[str] | None = None) -> list[pathlib.Path]:
+        out: list[pathlib.Path] = []
+        for p in root.iterdir():
+            if not (
+                p.is_dir()
+                and (p / "classifier_best.pt").is_file()
+                and (p / "model_performance.json").is_file()
+            ):
+                continue
+            if pattern is None or pattern.fullmatch(p.name):
+                out.append(p)
+        return out
+
+    if run_style == "underscore":
+        runs = _collect(ITER_DIR_RE)
+    elif run_style == "legacy":
         runs = _collect(ITER_DIR_RE_LEGACY)
+    elif run_style == "split":
+        runs = _collect(SPLIT_DIR_RE)
+    elif run_style == "auto":
+        runs = _collect(ITER_DIR_RE)
+        if not runs:
+            runs = _collect(SPLIT_DIR_RE)
+        if not runs:
+            runs = _collect(ITER_DIR_RE_LEGACY)
+    else:
+        raise ValueError(f"Unknown run_style={run_style!r}")
+
     if not runs:
         raise FileNotFoundError(
-            f"No runs with classifier_best.pt and model_performance.json under {root.resolve()}"
+            f"No runs with classifier_best.pt and model_performance.json under {root.resolve()} "
+            f"(run_style={run_style})"
         )
-    return sorted(runs, key=_iter_sort_key)
+    return sorted(runs, key=_run_sort_key)
+
+
+def _should_use_assignment(cfg: dict) -> bool:
+    """Data-split runs record split_source / run_id=split_*; training-seed iters use IAU seed 0."""
+    split_source = cfg.get("split_source")
+    if isinstance(split_source, str) and split_source.startswith("assignment:"):
+        return True
+    run_id = str(cfg.get("run_id", ""))
+    return bool(re.fullmatch(r"split_\d+", run_id))
+
+
+def _latent_dir_for_assignment(latent_npz: str | pathlib.Path) -> pathlib.Path:
+    """Parent of the configured latent path, without following symlinks.
+
+    Staging dirs often symlink ``latent_raw_z_best.npz`` at a real dump (e.g. Output6)
+    while keeping ``split_assignment*.json`` next to the symlink. ``Path.resolve()``
+    would jump to the dump and miss the assignment.
+    """
+    return pathlib.Path(latent_npz).expanduser().parent
+
+
+def _test_indices_for_cfg(cfg: dict, meta: pd.DataFrame) -> tuple[np.ndarray, str]:
+    """Use latent-dir assignment for data-split runs; else IAU seed 0 (training-seed ensembles)."""
+    if _should_use_assignment(cfg):
+        latent_npz = cfg.get("latent_npz")
+        if not latent_npz:
+            raise KeyError("data-split cfg missing latent_npz")
+        latent_dir = _latent_dir_for_assignment(latent_npz)
+        _, _, te_idx, src = load_assignment_indices_from_dir(latent_dir, meta)
+        te_idx = filter_indices_mapped(meta, te_idx, LABEL_COLUMN)
+        return te_idx, src
+
+    _, _, te_idx = split_row_indices_by_iau_train_val_test(
+        meta,
+        IAU_COLUMN,
+        TRAIN_FRAC,
+        VAL_FRAC,
+        TEST_FRAC,
+        IAU_SPLIT_SEED,
+    )
+    te_idx = filter_indices_mapped(meta, te_idx, LABEL_COLUMN)
+    return te_idx, f"iau_split_seed={IAU_SPLIT_SEED}"
 
 
 def _latent_cfg(ckpt: dict, cfg_json: pathlib.Path) -> dict:
@@ -95,10 +175,18 @@ def _latent_cfg(ckpt: dict, cfg_json: pathlib.Path) -> dict:
 
 def _resolve_path(raw: str | pathlib.Path, fallback: pathlib.Path) -> pathlib.Path:
     p = pathlib.Path(raw)
-    for cand in (p, WISEREP_DIR / p.name, fallback):
+    name = p.name
+    candidates = [
+        p,
+        WISEREP_DIR / name,
+        WISEREP_DIR / "Test" / "data_z" / name,
+        WISEREP_DIR / "Test" / "data_no_z" / name,
+        fallback,
+    ]
+    for cand in candidates:
         if cand.is_file():
             return cand
-    raise FileNotFoundError(f"Missing file {raw!r} (also tried {fallback})")
+    raise FileNotFoundError(f"Missing file {raw!r} (also tried {[str(c) for c in candidates[1:]]})")
 
 
 def _load_z_and_meta(cfg: dict) -> tuple[np.ndarray, pd.DataFrame]:
@@ -122,10 +210,10 @@ def _has_redshift_from_cfg(cfg: dict) -> bool:
     return True
 
 
-def _title_prefix(has_redshift: bool) -> str:
-    if has_redshift:
-        return "DAEP (diffusion) with Redshift (new split)"
-    return "DAEP (diffusion) without Redshift (new split)"
+def _title_prefix(has_redshift: bool, *, data_split_ensemble: bool) -> str:
+    z_tag = "with Redshift" if has_redshift else "without Redshift"
+    split_tag = "data-split ensemble" if data_split_ensemble else "training-seed ensemble"
+    return f"DAEP (diffusion) {z_tag} ({split_tag})"
 
 
 def _row_normalize_cm(cm: np.ndarray) -> np.ndarray:
@@ -250,13 +338,25 @@ def main() -> None:
         "--cm-out",
         type=pathlib.Path,
         default=None,
-        help="Confusion matrix PNG (default: <root>/latent_cm_new_split.png)",
+        help="Confusion matrix PNG (default: <root>/plots/<tag>_test_cm.png)",
     )
     parser.add_argument(
         "--loss-out",
         type=pathlib.Path,
         default=None,
-        help="Loss curves PNG (default: <root>/latent_loss_curves_new_split.png)",
+        help="Loss curves PNG (default: <root>/plots/<tag>_loss_curves.png)",
+    )
+    parser.add_argument(
+        "--run-style",
+        choices=("auto", "underscore", "legacy", "split"),
+        default="auto",
+        help="Which run directories to aggregate (default: auto).",
+    )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        default=None,
+        help="Optional cap after discovery/sort (e.g. 10 for legacy iter0..iter9).",
     )
     parser.add_argument(
         "--allow-overwrite",
@@ -266,12 +366,22 @@ def main() -> None:
     args = parser.parse_args()
 
     comparison_dir = args.comparison_root.expanduser().resolve()
-    run_dirs = discover_run_dirs(comparison_dir)
+    run_dirs = discover_run_dirs(comparison_dir, run_style=args.run_style)
+    if args.max_runs is not None:
+        run_dirs = run_dirs[: max(0, args.max_runs)]
+        if not run_dirs:
+            raise FileNotFoundError(f"No runs left after --max-runs={args.max_runs}")
+    data_split_ensemble = all(SPLIT_DIR_RE.fullmatch(p.name) for p in run_dirs)
+    if data_split_ensemble:
+        tag = "data_split_ensemble"
+    elif args.run_style == "legacy" or all(ITER_DIR_RE_LEGACY.fullmatch(p.name) for p in run_dirs):
+        tag = "legacy_iter_training_seed_ensemble"
+    else:
+        tag = "training_seed_ensemble"
 
-    cm_out = (args.cm_out or comparison_dir / "latent_cm_new_split.png").expanduser().resolve()
-    loss_out = (
-        args.loss_out or comparison_dir / "latent_loss_curves_new_split.png"
-    ).expanduser().resolve()
+    plots_dir = comparison_dir / "plots"
+    cm_out = (args.cm_out or plots_dir / f"{tag}_test_cm.png").expanduser().resolve()
+    loss_out = (args.loss_out or plots_dir / f"{tag}_loss_curves.png").expanduser().resolve()
     if not args.allow_overwrite:
         _refuse_overwrite(cm_out)
         _refuse_overwrite(loss_out)
@@ -284,38 +394,6 @@ def main() -> None:
     first_cfg = _latent_cfg(first_ckpt, run_dirs[0] / "cfg_used.json")
     has_redshift = _has_redshift_from_cfg(first_cfg)
 
-    z, meta = _load_z_and_meta(first_cfg)
-    _, _, te_idx = split_row_indices_by_iau_train_val_test(
-        meta,
-        IAU_COLUMN,
-        TRAIN_FRAC,
-        VAL_FRAC,
-        TEST_FRAC,
-        IAU_SPLIT_SEED,
-    )
-    te_idx = filter_indices_mapped(meta, te_idx, LABEL_COLUMN)
-
-    test_ds = LatentDataset(meta, z, te_idx, LABEL_COLUMN)
-    te_load = DataLoader(
-        test_ds,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        collate_fn=collate_latent,
-        num_workers=0,
-    )
-
-    embed_dim = int(np.prod(z.shape[1:]))
-    if first_cfg.get("latent_shape") is not None:
-        ls = [int(x) for x in first_cfg["latent_shape"]]
-        if len(ls) == len(z.shape) and len(ls) >= 2:
-            cfg_spatial = int(np.prod(ls[1:]))
-        else:
-            cfg_spatial = int(np.prod(ls))
-        if cfg_spatial != embed_dim:
-            raise ValueError(
-                f"latent_shape in cfg {ls!r} (per-row size {cfg_spatial}) does not match "
-                f"z.shape {tuple(z.shape)} (per-row size {embed_dim})"
-            )
     loss_fn = nn.CrossEntropyLoss()
     cm_raw_runs = []
     cm_recall_runs = []
@@ -328,6 +406,16 @@ def main() -> None:
         perf_path = run_dir / "model_performance.json"
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         cfg = _latent_cfg(ckpt, run_dir / "cfg_used.json")
+        z, meta = _load_z_and_meta(cfg)
+        te_idx, split_src = _test_indices_for_cfg(cfg, meta)
+        embed_dim = int(np.prod(z.shape[1:]))
+        te_load = DataLoader(
+            LatentDataset(meta, z, te_idx, LABEL_COLUMN),
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            collate_fn=collate_latent,
+            num_workers=0,
+        )
 
         model = _build_model(cfg, embed_dim, device)
         if "model_state_dict" in ckpt:
@@ -348,7 +436,7 @@ def main() -> None:
         cm_recall_runs.append(_row_normalize_cm(cm) * 100.0)
         cm_precision_runs.append(_col_normalize_cm(cm) * 100.0)
         loss_curves.append(_loss_curves_from_json(perf_path))
-        print(f"Loaded {run_dir.name}")
+        print(f"Loaded {run_dir.name}  test_n={len(te_idx)}  split={split_src}")
 
     cm_recall_stack = np.stack(cm_recall_runs, axis=0)
     cm_precision_stack = np.stack(cm_precision_runs, axis=0)
@@ -408,8 +496,8 @@ def main() -> None:
         mat_std_pct=cm_recall_std,
     )
     fig_cm.suptitle(
-        f"{_title_prefix(has_redshift)} Confusion Matrix | "
-        f"accuracy {100.0 * acc:.1f} ± {100.0 * acc_std:.1f}%",
+        f"{_title_prefix(has_redshift, data_split_ensemble=data_split_ensemble)} "
+        f"Confusion Matrix | accuracy {100.0 * acc:.1f} ± {100.0 * acc_std:.1f}%",
         y=1.02,
     )
     fig_cm.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])

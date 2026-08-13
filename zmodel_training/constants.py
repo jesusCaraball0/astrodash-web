@@ -39,8 +39,8 @@ SPLITS_JSON_DAEP_MATCHED_Z = WISEREP_DIR / "daep_matched_split_z.json"
 SPLITS_JSON_DAEP_MATCHED_NOZ = WISEREP_DIR / "daep_matched_split_noz.json"
 # Checkpoint roots
 OUT_DIR = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_z" / RUN_ID
-OUT_DIR_DAEP_MATCHED_Z = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_z"
-OUT_DIR_DAEP_MATCHED_NOZ = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_matched_comparison_noz"
+OUT_DIR_DAEP_MATCHED_Z = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_z"
+OUT_DIR_DAEP_MATCHED_NOZ = PROJECT_ROOT / "data" / "pre_trained_models" / "daep_comparison_noz"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Henna deduplicated bundles (create_henna_matched_dash_split.py)

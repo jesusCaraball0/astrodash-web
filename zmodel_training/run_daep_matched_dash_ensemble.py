@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Train Dash 1D CNN ensemble runs on Henna-dedup matched splits (+z and/or -z).
+Train Dash 1D CNN ensemble runs on DAEP-matched splits (+z and/or -z).
 
 Prerequisite:
-  python zmodel_training/create_henna_matched_dash_split.py
+  python zmodel_training/create_daep_matched_dash_split.py
 
 Usage:
   python zmodel_training/run_daep_matched_dash_ensemble.py
@@ -21,7 +21,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DASH_RETRAIN = SCRIPT_DIR / "dash_retrain.py"
-CREATE_SPLIT = SCRIPT_DIR / "create_henna_matched_dash_split.py"
+CREATE_SPLIT = SCRIPT_DIR / "create_daep_matched_dash_split.py"
 
 
 def run_one(seed: int, has_redshift: bool) -> None:
@@ -41,7 +41,7 @@ def run_one(seed: int, has_redshift: bool) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Henna-matched Dash 1D CNN ensemble.")
+    parser = argparse.ArgumentParser(description="Run DAEP-matched Dash 1D CNN ensemble.")
     parser.add_argument(
         "--seeds",
         type=int,
@@ -62,7 +62,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-split-create",
         action="store_true",
-        help="Skip running create_henna_matched_dash_split.py first.",
+        help="Skip running create_daep_matched_dash_split.py first.",
     )
     args = parser.parse_args()
 
@@ -91,15 +91,15 @@ def main() -> None:
     print("\nDone. Evaluate with:")
     print(
         "  python zmodel_training/roc_ensemble_daep_comparison.py "
-        "data/pre_trained_models/henna_matched_comparison_z"
+        "data/pre_trained_models/daep_comparison_z"
     )
     print(
         "  python zmodel_training/dash_ensemble_plots.py "
-        "data/pre_trained_models/henna_matched_comparison_z"
+        "data/pre_trained_models/daep_comparison_z"
     )
     print(
         "  python zmodel_training/dash_ensemble_plots.py "
-        "data/pre_trained_models/henna_matched_comparison_noz"
+        "data/pre_trained_models/daep_comparison_noz"
     )
 
 

@@ -84,6 +84,21 @@ def resolve_daep_matched_paths(has_redshift: bool) -> tuple[Path, Path, Path]:
     """Return (splits_json, processed_meta_csv, default_out_root) for +z or -z."""
     if has_redshift:
         return (
+            const.SPLITS_JSON_DAEP_MATCHED_Z,
+            const.PROCESSED_META_Z,
+            const.OUT_DIR_DAEP_MATCHED_Z,
+        )
+    return (
+        const.SPLITS_JSON_DAEP_MATCHED_NOZ,
+        const.PROCESSED_META_NOZ,
+        const.OUT_DIR_DAEP_MATCHED_NOZ,
+    )
+
+
+def resolve_henna_matched_paths(has_redshift: bool) -> tuple[Path, Path, Path]:
+    """Return (splits_json, processed_meta_csv, default_out_root) for Henna-dedup +z/-z."""
+    if has_redshift:
+        return (
             const.SPLITS_JSON_HENNA_MATCHED_Z,
             const.PROCESSED_META_HENNA_Z,
             const.OUT_DIR_HENNA_MATCHED_Z,

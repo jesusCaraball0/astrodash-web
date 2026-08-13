@@ -78,7 +78,7 @@ SETS = [
         "train_cfg": PROJECT_ROOT
         / "data"
         / "pre_trained_models"
-        / "daep_matched_comparison_z"
+        / "daep_comparison_z"
         / "iter_0"
         / "training_config.json",
     },

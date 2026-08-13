@@ -43,18 +43,26 @@ IS_MACRO = False
 
 
 def discover_run_dirs(root: Path) -> List[Path]:
-    """Subfolders ``iterN`` or ``iter_N`` with numeric suffix, sorted by that number."""
-    pat = re.compile(r"^iter[_]?(\d+)$")
-    found: List[tuple[int, Path]] = []
+    """Prefer ``iter_*`` training-seed runs; else ``split_*`` data-split runs."""
+    iter_pat = re.compile(r"^iter[_]?(\d+)$")
+    split_pat = re.compile(r"^split_(\d+)$")
     if not root.is_dir():
         raise FileNotFoundError(root)
-    for p in root.iterdir():
-        if not p.is_dir():
-            continue
-        m = pat.match(p.name)
-        if m:
-            found.append((int(m.group(1)), p))
-    found.sort(key=lambda x: x[0])
+
+    def _collect(pat: re.Pattern[str]) -> List[tuple[int, Path]]:
+        found: List[tuple[int, Path]] = []
+        for p in root.iterdir():
+            if not p.is_dir():
+                continue
+            m = pat.fullmatch(p.name)
+            if m:
+                found.append((int(m.group(1)), p))
+        found.sort(key=lambda x: x[0])
+        return found
+
+    found = _collect(iter_pat)
+    if not found:
+        found = _collect(split_pat)
     return [p for _, p in found]
 
 
@@ -68,13 +76,15 @@ def std_ddof1(x: np.ndarray) -> float:
 def collect_run_predictions(
     run_dirs: List[Path],
     device: torch.device,
-) -> tuple[np.ndarray, List[np.ndarray], List[str]]:
+) -> tuple[List[np.ndarray], List[np.ndarray], List[str]]:
     """
-    Returns y_true from the first run (verified against others), softmax rows per run,
-    and class names from class_mapping.json.
+    Returns per-run y_true, per-run softmax scores, and class names.
+
+    Each run is evaluated on its own test split from training_config.json
+    (required for data-split ensembles where test membership differs).
     """
+    all_y_true: List[np.ndarray] = []
     all_scores: List[np.ndarray] = []
-    y_ref: np.ndarray | None = None
     class_names: List[str] | None = None
 
     for run_dir in run_dirs:
@@ -102,24 +112,17 @@ def collect_run_predictions(
 
         model = rc.load_model(model_path, n_classes, device)
         y_true, y_score = rc.collect_test_predictions(model, loader, device)
-
-        if y_ref is None:
-            y_ref = y_true
-        elif not np.array_equal(y_ref, y_true):
-            raise RuntimeError(
-                f"y_true mismatch vs first run at {run_dir} "
-                "(check identical training_config splits / data mode across iters)."
-            )
-
+        all_y_true.append(y_true)
         all_scores.append(y_score)
+        print(f"  {run_dir.name}: test_n={len(y_true)}")
 
-    if y_ref is None or not all_scores or class_names is None:
+    if not all_y_true or not all_scores or class_names is None:
         raise RuntimeError(
             f"No valid runs with {CKPT_NAME} under given directories "
             f"(need training_config.json + class_mapping.json)."
         )
 
-    return y_ref, all_scores, class_names
+    return all_y_true, all_scores, class_names
 
 
 def main() -> None:
@@ -147,18 +150,25 @@ def main() -> None:
         raise FileNotFoundError(f"No subdirs with {CKPT_NAME} under {root}")
 
     device = helpers.get_device()
-    y_true, all_scores, class_names = collect_run_predictions(run_dirs, device)
+    all_y_true, all_scores, class_names = collect_run_predictions(run_dirs, device)
     n_runs = len(all_scores)
     n_classes = len(class_names)
     average_kind = "macro" if IS_MACRO else "micro"
+    data_split_ensemble = all(re.fullmatch(r"split_\d+", d.name) for d in run_dirs)
 
-    y_pred_runs = [np.argmax(s, axis=1) for s in all_scores]
     avg_f1_runs = [
-        f1_score(y_true, p, average=average_kind, zero_division=0) for p in y_pred_runs
+        f1_score(y_true, np.argmax(s, axis=1), average=average_kind, zero_division=0)
+        for y_true, s in zip(all_y_true, all_scores)
     ]
     avg_auc_runs = [
-        roc_auc_score(y_true, s, multi_class="ovr", average=average_kind, labels=np.arange(n_classes))
-        for s in all_scores
+        roc_auc_score(
+            y_true,
+            s,
+            multi_class="ovr",
+            average=average_kind,
+            labels=np.arange(n_classes),
+        )
+        for y_true, s in zip(all_y_true, all_scores)
     ]
 
     f1_m, f1_s = float(np.mean(avg_f1_runs)), std_ddof1(np.array(avg_f1_runs))
@@ -170,25 +180,28 @@ def main() -> None:
     print(f"{average_kind} F1      = {f1_m:.4f} ± {f1_s:.4f}")
     print(f"{average_kind} OvR AUC = {auc_m:.4f} ± {auc_s:.4f}")
 
-    y_bin = label_binarize(y_true, classes=np.arange(n_classes))
-
     fig, ax = plt.subplots(figsize=(9, 8))
 
     for i, name in enumerate(class_names):
-        pos = int(y_bin[:, i].sum())
-        if pos == 0 or pos == len(y_true):
-            print(f"Skipping ROC curve for '{name}': positives={pos}, n={len(y_true)}")
-            continue
-
         tpr_rows: List[np.ndarray] = []
         auc_i: List[float] = []
-        for y_score in all_scores:
+        for y_true, y_score in zip(all_y_true, all_scores):
+            y_bin = label_binarize(y_true, classes=np.arange(n_classes))
+            if y_bin.ndim == 1:
+                y_bin = np.column_stack([1 - y_bin, y_bin])
+            pos = int(y_bin[:, i].sum())
+            if pos == 0 or pos == len(y_true):
+                continue
             fpr, tpr, _ = roc_curve(y_bin[:, i], y_score[:, i])
             tpr_rows.append(np.interp(FPR_GRID, fpr, tpr))
             auc_i.append(auc(fpr, tpr))
 
+        if not tpr_rows:
+            print(f"Skipping ROC curve for '{name}': no run had both classes")
+            continue
+
         tpr_mean = np.mean(tpr_rows, axis=0)
-        tpr_std = np.std(tpr_rows, axis=0, ddof=1) if n_runs > 1 else np.zeros_like(tpr_mean)
+        tpr_std = np.std(tpr_rows, axis=0, ddof=1) if len(tpr_rows) > 1 else np.zeros_like(tpr_mean)
         auc_mean = float(np.mean(auc_i))
         auc_std = std_ddof1(np.array(auc_i))
 
@@ -213,9 +226,11 @@ def main() -> None:
     ax.set_ylabel("True positive rate")
     ax.legend(loc="lower right", fontsize=8)
     ax.grid(True, alpha=0.3)
+    ensemble_tag = "data-split" if data_split_ensemble else "training-seed"
     ax.set_title(
-        f"ROC  Dash1D CNN with redshift\n"
-        f"{average_kind} F1 = {f1_m:.3f} ± {f1_s:.3f}  |  {average_kind} avg AUC = {auc_m:.3f} ± {auc_s:.3f}"
+        f"ROC  Dash1D CNN with redshift ({ensemble_tag} ensemble)\n"
+        f"{average_kind} F1 = {f1_m:.3f} ± {f1_s:.3f}  |  "
+        f"{average_kind} avg AUC = {auc_m:.3f} ± {auc_s:.3f}"
     )
     fig.tight_layout()
 
